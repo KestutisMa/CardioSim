@@ -1,0 +1,175 @@
+#version 430
+// #extension GL_ARB_shading_language_include : enable
+#define BLOCK_SIZE_X 1 // butina del find-replace in shader.cpp
+#define BLOCK_SIZE_Y 1 //
+layout(local_size_x = BLOCK_SIZE_X, local_size_y = BLOCK_SIZE_Y) in;
+
+layout(binding = 3, std430) buffer b1 {
+  float u_[];
+}; // 1,2,3 bufferiai jau paskirti
+layout(binding = 4, std430) buffer b2 { float v_[]; };
+layout(binding = 5, std430) buffer b3 { float w_[]; };
+layout(binding = 6, std430) buffer b4 { float J_ion[]; };
+layout(binding = 7, std430) buffer b5 { float J_gj[]; };
+layout(binding = 15, std430) buffer b_dbg {
+  float dbg[16];
+}; // size for testing
+// layout(binding = 10, std430) buffer b6 {float gj[];}; //W,NW,NE
+
+layout(location = 20) uniform uvec2 size; // XY
+layout(location = 21) uniform float dt_sim;
+layout(location = 22) uniform uint i;
+
+layout(location = 23) uniform bool mouse_pressed;
+layout(location = 24) uniform uvec2 mouse_coords;
+
+//  uint adr = gl_GlobalInvocationID.y*size.x+gl_GlobalInvocationID.x;
+uint x = gl_GlobalInvocationID.x;
+uint y = gl_GlobalInvocationID.y;
+uint adr = y * size.x + x;
+// keisti nereikia, (padidinus local, reikia sumazinti glDispatchCompute,
+// gl_GlobalInvocationID.x pasikeicia automatiskai trink:
+// uint x = gl_GlobalInvocationID.x * gl_WorkGroupSize.x +
+// gl_LocalInvocationID.x; uint y = gl_GlobalInvocationID.y * gl_WorkGroupSize.y
+// + gl_LocalInvocationID.y;
+
+//# include mc4sm.comp
+
+float rand(vec2 co) { // bandymams, trink
+  return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+void main() {
+  //	u_[gl_GlobalInvocationID.y*size.x+gl_GlobalInvocationID.x] =
+  //
+  // gl_GlobalInvocationID.x /64.f; //
+  // gl_LocalInvocationID.x/16.f;//float(gl_GlobalInvocationID.x)
+  /// (gl_NumWorkGroups.x);
+  if (x >= 0 && x < size.x && y >= 0 && y < size.y) {
+    // if (x > 0 && x < size.x-1 && y > 0 && y < size.y-1 ) {
+    //			float C = 1.f; //#microF/cm2
+    //            float Area = 8.8e-5;// #cm2
+
+    // float u = u_[adr];
+    float I_ext = 0;
+    int first = 1; // ms
+    // float delay = 70;
+    int second = 240; // ms
+    //			while (true) {
+    //			}
+    I_ext = //( (i*dt_sim > first && i*dt_sim < first+2)
+            //||  (i*dt_sim > first+delay && i*dt_sim < first+delay + 1) ) &&
+        ((i >= first * 50 && i <= (first + 2) * 50) ||
+         (i % (second * 50)) >= 0 && (i % (second * 50) <= 2 * 50))
+                //   ||
+                //  (i >= second * 50 &&
+                //   i <= (second + 2) * 50)) // periodinis stim. 100it(2ms)
+                //   ilgio
+                //&& (y >= 64-5 && y <= 64+5 && x >= 64-4 &&
+                // x <= 64+4) //? .25f : 0;
+                && (pow(int(y) - 64, 2) + pow(int(x) - 32, 2) <= 5)
+            ? .5f
+            : 0;
+
+    // I_ext = 1.f;
+
+    // I_ext = mouse_pressed && (pow(int(x) - int(mouse_coords.x), 2) +
+    //                           pow(int(y) - int(mouse_coords.y), 2))
+    // < 25.
+    //             ? .05f
+    //             : 0;
+    //			I_ext = mouse_pressed && x >= mouse_coords.x-1
+    // &&x <=
+    // mouse_coords.x+1 && y >= mouse_coords.y-1 && y <=
+    // mouse_coords.y+1/*mouse_coords.y == y*/ ? 2.f : 0;
+
+    float JgjW = 0;
+    float JgjNW = 0;
+    float JgjNE = 0;
+
+    float JgjE = 0;
+    float JgjSE = 0;
+    float JgjSW = 0;
+
+    int xL = int(x) - 1;
+    int xR = int(x) + 1;
+    int yD = int(y) - 1; // down
+    if (xL == -1)        // periodic boundary left
+      // xL = int(size.x)-1; // take x on right
+      xL = 0;                      // isjungiam
+    if (xR == int(size.x) - 1 + 1) // periodic boundary right
+                                   //				xR = 0;
+      xR = int(size.x) - 2;        // isjungiam
+    if (yD == -1)                  // periodic boundary right
+                                   // yD = int(size.y) - 1;
+      yD = 1;                      // isjungiam
+
+    JgjW = J_gj[y * size.x * 3 + x * 3];
+    JgjE = -J_gj[y * size.x * 3 + xR * 3]; // JgjE = -J_gj[y*size.x*3 +
+                                           // (x+1)*3];
+    JgjNW = J_gj[y * size.x * 3 + x * 3 + 1];
+    JgjNE = J_gj[y * size.x * 3 + x * 3 + 2];
+    if (y % 2 == 0) {
+      JgjSW = -J_gj[yD * size.x * 3 + x * 3 +
+                    1]; // JgjSW = -J_gj[(y-1)*size.x*3 + x*3 + 1]; //NW
+      JgjSE =
+          -J_gj[yD * size.x * 3 + xL * 3 + 2]; // JgjSE = -J_gj[(y-1)*size.x*3 +
+                                               // (x-1)*3 + 2]; NE
+    } else {                                   // when y % 2 != 0
+      JgjSW = -J_gj[yD * size.x * 3 + xR * 3 +
+                    1]; // JgjSW = -J_gj[(y-1)*size.x*3 + (x+1)*3 + 1];
+      JgjSE = -J_gj[yD * size.x * 3 + x * 3 +
+                    2]; // JgjSE = -J_gj[(y-1)*size.x*3 + x*3 + 2];
+    }
+
+    // dbg[y*size.x*2 + x*2] = JgjW;
+    float J = J_ion[adr] + JgjW + JgjE + JgjNW + JgjNE + JgjSE + JgjSW;
+    u_[adr] += dt_sim * (I_ext + J); //#/(Cm*Area); // WORKS
+
+    // u_[adr] = rand(vec2(i, x * y)); // testams;
+
+    // u_[adr] = .5;
+    // float a[2] = {1.,1.};
+    // float b[2] = a;//{0,0};
+    // float tmp = 0;
+    // b = a;
+    // a[0] = .5;
+    // a[1] = .5;
+
+    // float a[4 * 4] = {.1,  .2, .03, .4, .01, .2, .3, .4,
+    //                   .01, .2, .3,  .4, .1,  .2, .3, .4};
+    // float b[4 * 4];
+    // //  = { .2, .2,.2,.2,
+    // // .2, .2,.2,.2,
+    // // .2, .2,.2,.2,
+    // // .2, .2,.2,.2};
+    // b = r8mat_expm1(4, a);
+    // u_[adr] = b[0];
+    // dbg = b;
+    // // dbg[1] = 2;
+    // // u_[adr] = float(gl_LocalInvocationID.x) / (gl_WorkGroupSize.x);
+    // float pars[5] = float[](0.1522, 0.0320, 0.2150, -34.2400, 0.2570);
+    // float gmax = 1.;
+
+    // float par[14] = float[](pars[0], pars[1], pars[2], pars[3], -1, 2 * gmax,
+    //                         pars[4] * gmax, //  % left side
+    //                         pars[0], pars[1], pars[2], pars[3], -1, 2 * gmax,
+    //                         pars[4] * gmax); // % right side
+
+    // float dt = 0.01;
+    // float T = 100.;
+    // const int N = 10000;
+    // float V[N];
+    // float gj[N];
+    // float p[4];
+    // V[0] = 0;
+    // gj[0] = mc4sm_ss(V[0], par, p);
+    // for (int i = 0; i < N; i++) {
+    //   V[i] = 100. * (i + 1) * dt / 100.;
+    //   gj[i] = mc4sm(V[i], dt, par, p);
+    //   dbg[i * 3 + 0] = i * dt;
+    //   dbg[i * 3 + 1] = V[i];
+    //   dbg[i * 3 + 2] = gj[i];
+    // }
+  }
+}

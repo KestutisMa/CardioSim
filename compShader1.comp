@@ -1,0 +1,723 @@
+#version 430
+#define BLOCK_SIZE_X 1 // butina del find-replace in shader.cpp
+#define BLOCK_SIZE_Y 1 // butina del find-replace in shader.cpp
+layout(local_size_x = BLOCK_SIZE_X, local_size_y = BLOCK_SIZE_Y) in;
+
+layout(binding = 3, std430) buffer b1 {
+  float u_[];
+}; // 1,2,3 bufferiai jau paskirti
+layout(binding = 4, std430) buffer b2 { float v_[]; };
+layout(binding = 5, std430) buffer b3 { float w_[]; };
+layout(binding = 6, std430) buffer b4 { float J_ion[]; };
+layout(binding = 7, std430) buffer b5 { float J_gj[]; };
+layout(binding = 10, std430) buffer b6 { float gj[]; };        // W,NW,NE
+layout(binding = 12, std430) buffer b_par { float gj_par[]; }; // gj parameters
+layout(binding = 13, std430) buffer b_gj_p {
+  float gj_p[];
+}; // markov state matices for each gj
+layout(binding = 15, std430) buffer b_dbg { float dbg[]; };
+
+layout(location = 20) uniform uvec2 size; // XY
+layout(location = 21) uniform float dt_sim;
+layout(location = 22) uniform uint i; // butina, mc36ss, ---nebutina, debug
+layout(location = 27) uniform bool gjModelEnabled;
+
+// trink
+// // (optional) header of functions included at file end
+// //Returns gj; gj_sel selector for gj_p and gj_par - 0: W, 1: NW, 2: NE
+// float mc36(in int gj_sel, in float vj, in float Pt, in float pc1c2, in float
+// pc2c1); float mc36ss(in int gj_sel, in float vj, in float Pt, in float pc1c2,
+// in float pc2c1);
+// // void r8mat_expm1(out int n, in int a[2]);
+
+uint x = gl_GlobalInvocationID.x;
+uint y = gl_GlobalInvocationID.y;
+uint adr = y * size.x + x;
+
+float r8_max(float x, float y) {
+  float value;
+
+  if (y < x) {
+    value = x;
+  } else {
+    value = y;
+  }
+  return value;
+}
+
+float r8mat_norm_li(int m, int n, float a[4 * 4]) {
+  int i;
+  int j;
+  float row_sum;
+  float value;
+
+  value = 0.0;
+
+  for (i = 0; i < m; i++) {
+    row_sum = 0.0;
+    for (j = 0; j < n; j++) {
+      row_sum = row_sum + abs(a[i + j * m]);
+    }
+    value = r8_max(value, row_sum);
+  }
+  return value;
+}
+
+float r8_big() {
+  float value;
+
+  value = 1.0E+30;
+
+  return value;
+}
+
+float r8_log_2(float x) {
+  float value;
+
+  if (x == 0.0) {
+    value = -r8_big();
+  } else {
+    value = log(abs(x)) / log(2.0);
+  }
+
+  return value;
+}
+
+int i4_max(int i1, int i2) {
+  int value;
+
+  if (i2 < i1) {
+    value = i1;
+  } else {
+    value = i2;
+  }
+  return value;
+}
+
+void r8mat_scale(int m, int n, float s, inout float a[4 * 4]) {
+  int i;
+  int j;
+
+  for (j = 0; j < n; j++) {
+    for (i = 0; i < m; i++) {
+      a[i + j * m] = a[i + j * m] * s;
+    }
+  }
+  return;
+}
+
+float[4 * 4] r8mat_identity_new(int n) {
+  int i;
+  int j;
+  int k;
+
+  float[4 * 4] a;
+
+  k = 0;
+  for (j = 0; j < n; j++) {
+    for (i = 0; i < n; i++) {
+      if (i == j) {
+        a[k] = 1.0;
+      } else {
+        a[k] = 0.0;
+      }
+      k = k + 1;
+    }
+  }
+
+  return a;
+}
+
+void r8mat_add(int m, int n, float alpha, float a[4 * 4], float beta,
+               float b[4 * 4], inout float c[4 * 4]) {
+  int i;
+  int j;
+
+  for (j = 0; j < n; j++) {
+    for (i = 0; i < m; i++) {
+      c[i + j * m] = alpha * a[i + j * m] + beta * b[i + j * m];
+    }
+  }
+  return;
+}
+
+void r8mat_mm(int n1, int n2, int n3, float a[4 * 4], float b[4 * 4],
+              inout float c[4 * 4]) {
+  int i;
+  int j;
+  int k;
+
+  float c1[4 * 4];
+
+  for (i = 0; i < n1; i++) {
+    for (j = 0; j < n3; j++) {
+      c1[i + j * n1] = 0.0;
+      for (k = 0; k < n2; k++) {
+        c1[i + j * n1] = c1[i + j * n1] + a[i + k * n1] * b[k + j * n2];
+      }
+    }
+  }
+
+  c = c1; // r8mat_copy ( n1, n3, c1, c );
+
+  return;
+}
+
+float[4 * 4] r8mat_fss_new(int n, float a[4 * 4], int nb, float b[4 * 4]) {
+  int i;
+  int ipiv;
+  int j;
+  int jcol;
+  float piv;
+  float t;
+
+  float x[4 * 4];
+
+  for (j = 0; j < nb; j++) {
+    for (i = 0; i < n; i++) {
+      x[i + j * n] = b[i + j * n];
+    }
+  }
+  for (jcol = 1; jcol <= n; jcol++) {
+    //
+    //  Find the maximum element in column I.
+    //
+    piv = abs(a[jcol - 1 + (jcol - 1) * n]);
+    ipiv = jcol;
+    for (i = jcol + 1; i <= n; i++) {
+      if (piv < abs(a[i - 1 + (jcol - 1) * n])) {
+        piv = abs(a[i - 1 + (jcol - 1) * n]);
+        ipiv = i;
+      }
+    }
+
+    if (piv == 0.0) {
+      // TODO: error
+      //   cerr << "R8MAT_FSS_NEW - Fatal error!\n";
+      //   cerr << "  Zero pivot on step " << jcol << "\n";
+    }
+    //
+    //  Switch rows JCOL and IPIV, and X.
+    //
+    if (jcol != ipiv) {
+      for (j = 1; j <= n; j++) {
+        t = a[jcol - 1 + (j - 1) * n];
+        a[jcol - 1 + (j - 1) * n] = a[ipiv - 1 + (j - 1) * n];
+        a[ipiv - 1 + (j - 1) * n] = t;
+      }
+      for (j = 0; j < nb; j++) {
+        t = x[jcol - 1 + j * n];
+        x[jcol - 1 + j * n] = x[ipiv - 1 + j * n];
+        x[ipiv - 1 + j * n] = t;
+      }
+    }
+    //
+    //  Scale the pivot row.
+    //
+    t = a[jcol - 1 + (jcol - 1) * n];
+    a[jcol - 1 + (jcol - 1) * n] = 1.0;
+    for (j = jcol + 1; j <= n; j++) {
+      a[jcol - 1 + (j - 1) * n] = a[jcol - 1 + (j - 1) * n] / t;
+    }
+    for (j = 0; j < nb; j++) {
+      x[jcol - 1 + j * n] = x[jcol - 1 + j * n] / t;
+    }
+    //
+    //  Use the pivot row to eliminate lower entries in that column.
+    //
+    for (i = jcol + 1; i <= n; i++) {
+      if (a[i - 1 + (jcol - 1) * n] != 0.0) {
+        t = -a[i - 1 + (jcol - 1) * n];
+        a[i - 1 + (jcol - 1) * n] = 0.0;
+        for (j = jcol + 1; j <= n; j++) {
+          a[i - 1 + (j - 1) * n] =
+              a[i - 1 + (j - 1) * n] + t * a[jcol - 1 + (j - 1) * n];
+        }
+        for (j = 0; j < nb; j++) {
+          x[i - 1 + j * n] = x[i - 1 + j * n] + t * x[jcol - 1 + j * n];
+        }
+      }
+    }
+  }
+  //
+  //  Back solve.
+  //
+  for (jcol = n; 2 <= jcol; jcol--) {
+    for (i = 1; i < jcol; i++) {
+      for (j = 0; j < nb; j++) {
+        x[i - 1 + j * n] =
+            x[i - 1 + j * n] - a[i - 1 + (jcol - 1) * n] * x[jcol - 1 + j * n];
+      }
+    }
+  }
+
+  return x;
+}
+
+void r8mat_minvm(int n1, int n2, float a[4 * 4], float b[4 * 4],
+                 inout float c[4 * 4]) {
+
+  float alu[4 * 4] = a; // r8mat_copy_new ( n1, n1, a );
+
+  float d[4 * 4] = r8mat_fss_new(n1, alu, n2, b);
+
+  c = d; // r8mat_copy ( n1, n2, d, c );
+
+  return;
+}
+
+float[4 * 4] r8mat_expm1(in int n, in float a[4 * 4]) {
+  // a[0] = n;//a[0];
+  const float one = 1.0;
+  const int q = 6;
+
+  float a2[4 * 4] = a; // a2 = r8mat_copy_new ( n, n, a );
+  float a_norm = r8mat_norm_li(n, n, a2);
+  int ee = int((r8_log_2(a_norm))) + 1;
+  int s = i4_max(0, ee + 1);
+  float t = 1.0 / pow(2.0, float(s));
+  r8mat_scale(n, n, t, a2);
+  float x[4 * 4] = a2; // x = r8mat_copy_new ( n, n, a2 );
+  float c = 0.5;
+  float e[4 * 4] = r8mat_identity_new(n);
+  r8mat_add(n, n, one, e, c, a2, e);
+  float d[4 * 4] = r8mat_identity_new(n);
+  r8mat_add(n, n, one, d, -c, a2, d);
+  bool p = true;
+  for (int k = 2; k <= q; k++) {
+    c = c * float((q - k + 1)) / float((k * (2 * q - k + 1)));
+
+    r8mat_mm(n, n, n, a2, x, x);
+
+    r8mat_add(n, n, c, x, one, e, e);
+
+    if (p) {
+      r8mat_add(n, n, c, x, one, d, d);
+    } else {
+      r8mat_add(n, n, -c, x, one, d, d);
+    }
+
+    p = !p;
+  }
+  r8mat_minvm(n, n, d, e, e);
+  for (int k = 1; k <= s; k++) {
+    r8mat_mm(n, n, n, e, e, e);
+  }
+
+  return e;
+
+  // float b[4*4] = {.5,.5,.5,.5,
+  // .5,.5,.5,.5,
+  // .5,.5,.5,.5,
+  // .5,.5,.5,.1};
+  // return b;
+}
+
+void gauss(float mat[4 * 5], inout float x[4]) {
+  const int n = 4;
+  int i, j, k;
+
+  for (i = 0; i < n; i++) {
+    for (j = i + 1; j < n; j++) {
+      if (abs(mat[i * (n + 1) + i]) < abs(mat[j * (n + 1) + i])) {
+        for (k = 0; k < n + 1; k++) {
+          /* swapping mat[i*(n+1)+k] and mat[j*(n+1)+k] */
+          mat[i * (n + 1) + k] = mat[i * (n + 1) + k] + mat[j * (n + 1) + k];
+          mat[j * (n + 1) + k] = mat[i * (n + 1) + k] - mat[j * (n + 1) + k];
+          mat[i * (n + 1) + k] = mat[i * (n + 1) + k] - mat[j * (n + 1) + k];
+        }
+      }
+    }
+  }
+
+  /* performing Gaussian elimination */
+  for (i = 0; i < n - 1; i++) {
+    for (j = i + 1; j < n; j++) {
+      float f = mat[j * (n + 1) + i] / mat[i * (n + 1) + i];
+      for (k = 0; k < n + 1; k++) {
+        mat[j * (n + 1) + k] = mat[j * (n + 1) + k] - f * mat[i * (n + 1) + k];
+      }
+    }
+  }
+  /* Backward substitution for discovering values of unknowns */
+  for (i = n - 1; i >= 0; i--) {
+    x[i] = mat[i * (n + 1) + n];
+
+    for (j = i + 1; j < n; j++) {
+      if (i != j) {
+        x[i] = x[i] - mat[i * (n + 1) + j] * x[j];
+      }
+    }
+    x[i] = x[i] / mat[i * (n + 1) + i];
+  }
+}
+
+float mc4sm_ss(int gj_sel, float Vj) {
+  // globals: reads gj_par, adr_par, adr, p
+  //		   writes: gj_p
+
+  uint adr_par =
+      adr * 3 * 2 * 7 +
+      gj_sel * 2 * 7; // *3: W,NW,NE; *7: parameters count; *2:gates count
+  uint adr_p = adr * 3 * 4 + gj_sel * 4; // gj_p adr
+
+  // % Vj gating parameters
+  float lamda1 =
+      gj_par[adr_par + 0 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing
+                                   // intensity rates when V=V0, in s^-1
+  float A_alfa1 =
+      gj_par[adr_par + 0 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate
+                                   // sensitivities to voltage, in mV^-1
+  float A_beta1 =
+      gj_par[adr_par + 0 * 7 + 2]; // A_beta1 = par(1,3); % opening rate
+                                   // sensitivities to voltage, in mV^-1
+  float V_01 =
+      gj_par[adr_par + 0 * 7 + 3]; // V_01 = par(1,4);    % voltages, when
+                                   // opening rate equals closing rate, in mV
+  float P_g1 = gj_par[adr_par + 0 * 7 + 4]; // P_g1 = par(1,5);
+  float G_o1 =
+      gj_par[adr_par + 0 * 7 +
+             5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
+  float G_c1 =
+      gj_par[adr_par + 0 * 7 +
+             6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
+
+  float lamda2 =
+      gj_par[adr_par + 1 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing
+                                   // intensity rates when V=V0, in s^-1
+  float A_alfa2 =
+      gj_par[adr_par + 1 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate
+                                   // sensitivities to voltage, in mV^-1
+  float A_beta2 =
+      gj_par[adr_par + 1 * 7 + 2]; // A_beta1 = par(1,3); % opening rate
+                                   // sensitivities to voltage, in mV^-1
+  float V_02 =
+      gj_par[adr_par + 1 * 7 + 3]; // V_01 = par(1,4);    % voltages, when
+                                   // opening rate equals closing rate, in mV
+  float P_g2 = gj_par[adr_par + 1 * 7 + 4]; // P_g1 = par(1,5);
+  float G_o2 =
+      gj_par[adr_par + 1 * 7 +
+             5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
+  float G_c2 =
+      gj_par[adr_par + 1 * 7 +
+             6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
+
+  float V[4][2] =
+      float[][](float[](Vj * G_o2 / (G_o1 + G_o2), -Vj * G_o1 / (G_o1 + G_o2)),
+                float[](Vj * G_c2 / (G_o1 + G_c2), -Vj * G_o1 / (G_o1 + G_c2)),
+                float[](Vj * G_o2 / (G_c1 + G_o2), -Vj * G_c1 / (G_c1 + G_o2)),
+                float[](Vj * G_c2 / (G_c1 + G_c2), -Vj * G_c1 / (G_c1 + G_c2)));
+
+  float Q[4 * 4] =
+      float[](-lamda2 * exp(A_beta2 * P_g2 * (V[0][1] - V_02)) -
+                  lamda1 * exp(A_beta1 * P_g1 * (V[0][0] - V_01)),
+              lamda2 * exp(A_beta2 * P_g2 * (V[0][1] - V_02)),
+              lamda1 * exp(A_beta1 * P_g1 * (V[0][0] - V_01)), 0.,
+              lamda2 * exp(-A_alfa2 * P_g2 * (V[1][1] - V_02)),
+              -lamda2 * exp(-A_alfa2 * P_g2 * (V[1][1] - V_02)) -
+                  lamda1 * exp(A_beta1 * P_g1 * (V[1][0] - V_01)),
+              0., lamda1 * exp(A_beta1 * P_g1 * (V[1][0] - V_01)),
+              lamda1 * exp(-A_alfa1 * P_g1 * (V[2][0] - V_01)), 0.,
+              -lamda1 * exp(-A_alfa1 * P_g1 * (V[2][0] - V_01)) -
+                  lamda2 * exp(A_beta2 * P_g2 * (V[2][1] - V_02)),
+              lamda2 * exp(A_beta2 * P_g2 * (V[2][1] - V_02)), 0.,
+              lamda1 * exp(-A_alfa1 * P_g1 * (V[3][0] - V_01)),
+              lamda2 * exp(-A_alfa2 * P_g2 * (V[3][1] - V_02)),
+              -lamda1 * exp(-A_alfa1 * P_g1 * (V[3][0] - V_01)) -
+                  lamda2 * exp(-A_alfa2 * P_g2 * (V[3][1] - V_02)));
+
+  float ggg[4] =
+      float[](G_o1 * G_o2 / (G_o1 + G_o2), G_o1 * G_c2 / (G_o1 + G_c2),
+              G_c1 * G_o2 / (G_c1 + G_o2), G_c1 * G_c2 / (G_c1 + G_c2));
+
+  float x[4] = float[](0., 0., 0., 0.); // will be p
+  float Q_[4 * 5];
+  for (int i = 0; i < 4; i++)
+    for (int j = 0; j < 5; j++) {
+      if (i == 0)
+        Q_[i * 5 + j] = 1.;
+      else if (j == 4)
+        Q_[i * 5 + j] = 0.; // equivalent (i == 1) ? 1 : 0;
+      else
+        Q_[i * 5 + j] = Q[j * 4 + i];
+    }
+
+  gauss(Q_, x);
+
+  for (int i = 0; i < 4; i++)
+    gj_p[adr_p + i] = x[i];
+
+  float gj = 0.; // gj=p*ggg';
+  for (int i = 0; i < 4; i++)
+    gj += x[i] * ggg[i];
+
+  return gj;
+}
+
+float mc4sm(int gj_sel, float Vj, float dt) {
+  // globals: reads gj_par, adr_par, adr, p, dt_sim
+  //		   writes/reads gj_p
+
+  // float dt = dt_sim;
+  uint adr_par =
+      adr * 3 * 2 * 7 +
+      gj_sel * 2 * 7; // *3: W,NW,NE; *7: parameters count; *2:gates count
+  uint adr_p = adr * 3 * 4 + gj_sel * 4; // gj_p adr
+
+  // % Vj gating parameters
+  float lamda1 =
+      gj_par[adr_par + 0 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing
+                                   // intensity rates when V=V0, in s^-1
+  float A_alfa1 =
+      gj_par[adr_par + 0 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate
+                                   // sensitivities to voltage, in mV^-1
+  float A_beta1 =
+      gj_par[adr_par + 0 * 7 + 2]; // A_beta1 = par(1,3); % opening rate
+                                   // sensitivities to voltage, in mV^-1
+  float V_01 =
+      gj_par[adr_par + 0 * 7 + 3]; // V_01 = par(1,4);    % voltages, when
+                                   // opening rate equals closing rate, in mV
+  float P_g1 = gj_par[adr_par + 0 * 7 + 4]; // P_g1 = par(1,5);
+  float G_o1 =
+      gj_par[adr_par + 0 * 7 +
+             5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
+  float G_c1 =
+      gj_par[adr_par + 0 * 7 +
+             6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
+
+  float lamda2 =
+      gj_par[adr_par + 1 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing
+                                   // intensity rates when V=V0, in s^-1
+  float A_alfa2 =
+      gj_par[adr_par + 1 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate
+                                   // sensitivities to voltage, in mV^-1
+  float A_beta2 =
+      gj_par[adr_par + 1 * 7 + 2]; // A_beta1 = par(1,3); % opening rate
+                                   // sensitivities to voltage, in mV^-1
+  float V_02 =
+      gj_par[adr_par + 1 * 7 + 3]; // V_01 = par(1,4);    % voltages, when
+                                   // opening rate equals closing rate, in mV
+  float P_g2 = gj_par[adr_par + 1 * 7 + 4]; // P_g1 = par(1,5);
+  float G_o2 =
+      gj_par[adr_par + 1 * 7 +
+             5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
+  float G_c2 =
+      gj_par[adr_par + 1 * 7 +
+             6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
+
+  float V[4][2] =
+      float[][](float[](Vj * G_o2 / (G_o1 + G_o2), -Vj * G_o1 / (G_o1 + G_o2)),
+                float[](Vj * G_c2 / (G_o1 + G_c2), -Vj * G_o1 / (G_o1 + G_c2)),
+                float[](Vj * G_o2 / (G_c1 + G_o2), -Vj * G_c1 / (G_c1 + G_o2)),
+                float[](Vj * G_c2 / (G_c1 + G_c2), -Vj * G_c1 / (G_c1 + G_c2)));
+
+  float Q[4 * 4] =
+      float[](-lamda2 * exp(A_beta2 * P_g2 * (V[0][1] - V_02)) -
+                  lamda1 * exp(A_beta1 * P_g1 * (V[0][0] - V_01)),
+              lamda2 * exp(A_beta2 * P_g2 * (V[0][1] - V_02)),
+              lamda1 * exp(A_beta1 * P_g1 * (V[0][0] - V_01)), 0.,
+              lamda2 * exp(-A_alfa2 * P_g2 * (V[1][1] - V_02)),
+              -lamda2 * exp(-A_alfa2 * P_g2 * (V[1][1] - V_02)) -
+                  lamda1 * exp(A_beta1 * P_g1 * (V[1][0] - V_01)),
+              0., lamda1 * exp(A_beta1 * P_g1 * (V[1][0] - V_01)),
+              lamda1 * exp(-A_alfa1 * P_g1 * (V[2][0] - V_01)), 0.,
+              -lamda1 * exp(-A_alfa1 * P_g1 * (V[2][0] - V_01)) -
+                  lamda2 * exp(A_beta2 * P_g2 * (V[2][1] - V_02)),
+              lamda2 * exp(A_beta2 * P_g2 * (V[2][1] - V_02)), 0.,
+              lamda1 * exp(-A_alfa1 * P_g1 * (V[3][0] - V_01)),
+              lamda2 * exp(-A_alfa2 * P_g2 * (V[3][1] - V_02)),
+              -lamda1 * exp(-A_alfa1 * P_g1 * (V[3][0] - V_01)) -
+                  lamda2 * exp(-A_alfa2 * P_g2 * (V[3][1] - V_02)));
+
+  for (int i = 0; i < 4; i++)
+    for (int j = 0; j < 4; j++)
+      Q[i * 4 + j] *= dt; // P=expm(Q*dt); *0.001 nes ms->s
+
+  float P[4 * 4];
+  P = r8mat_expm1(4, Q);
+
+  float p_next[4];
+  for (int k = 0; k < 4; k++)
+    p_next[k] = 0.;
+  for (int k = 0; k < 4; k++)
+    for (int j = 0; j < 4; j++)
+      p_next[k] += gj_p[adr_p + j] * P[j * 4 + k]; // p_next = p*P;
+
+  float ggg[4] =
+      float[4](G_o1 * G_o2 / (G_o1 + G_o2), G_o1 * G_c2 / (G_o1 + G_c2),
+               G_c1 * G_o2 / (G_c1 + G_o2), G_c1 * G_c2 / (G_c1 + G_c2));
+
+  float gj = 0.;
+  for (int i = 0; i < 4; i++)
+    gj += gj_p[adr_p + i] * ggg[i]; // gj=p*ggg';
+
+  for (int i = 0; i < 4; i++)
+    gj_p[adr_p + i] = p_next[i];
+
+  return gj;
+}
+
+void main() {
+  if (x >= 0 && x < size.x && y >= 0 && y < size.y) {
+    //  if (x > 0 && y < size.x-1 && y > 0 && y < size.y-1) {
+    //#parameters
+    float tvp = 3.33f;
+    float tv1m = 19.6f;
+    float tv2m = 1250.f;
+    float twp = 870.0f;
+    float twm = 41.0f;
+    float td = 0.25; // 0.25 orig; mazesnis greitina Na srove ir didina Vj, bet
+                     // mazina uzlaikyma
+    float to = 12.5; // 12.5
+    float tr = 33.3; // 33.3
+    float tsi = 30.0;
+    float xk = 10.0;
+    float ucsi = 0.85;
+    float uc = 0.13;
+    float uv = 0.04;
+    float Vfi = 15e-3f; //#nernst potential of fast gate
+    float V0 = -85e-3f; //#resting membrane potential
+
+    // float C = 1.f; //#microF/cm2 working mio?
+    // float C_Area = 1.f; //#microF/cm2 AV node
+    // https://physoc.onlinelibrary.wiley.com/doi/pdf/10.1113/jphysiol.1996.sp021424
+    // float l = 113e-6f*100.; // m->cm , peles
+    // https://www.ahajournals.org/doi/pdf/10.1161/01.RES.68.4.984 float cs =
+    // 189e-12f *100.*100.; // cross-section, m2->cm2 float Area =
+    // l*sqrt(cs/3.141)+ 2*cs; float Area = 8.8e-5f;// #cm2 float l = 100e-6f;
+    // float r = 10e-6f;
+    // 10000 um = 1e-5 cm2, in vitro
+    // https://academic.oup.com/cardiovascres/article/59/1/78/283804 float Area
+    // = (l*2*3.141*r + 3.141*r*r*2)*1e4; // cylinder area, m2->cm2
+    // float d1 = 100e-6, d2 = 20e-6, d3 = 10e-6; working myodardium?
+    // float d1 = 12e-6, d2 = 8e-6, d3 = 8e-6; // AV node, bukauskas 2014
+    // float Area =
+    //     2 * (d1 * d2 + d1 * d3 + d2 * d3) * 1e4; // cylinder area, m2->cm2
+    // float C = C_Area * Area;
+    float C =
+        40e-12 *
+        1e6; // pF->mF AV node
+             // https://physoc.onlinelibrary.wiley.com/doi/pdf/10.1113/jphysiol.1996.sp021424
+    //# numerical parameters
+    float timestep = dt_sim; // #0.02 # size of time step in ms
+
+    //            #currents
+    float jfi = 0;
+    float jso = 0;
+    float jsi = 0;
+
+    //#calculation
+    float p = 0; // # heaviside functions
+    float q = 0;
+
+    float u = u_[adr];
+    float v = v_[adr];
+    float w = w_[adr];
+
+    if (u >= uc)
+      p = 1.f;
+
+    if (u >= uv)
+      q = 1.f;
+
+    float dv =
+        (1.f - p) * (1.f - v) / ((1.f - q) * tv1m + tv2m * q) - p * v / tvp;
+    float dw = (1.f - p) * (1.f - w) / twm - p * w / twp;
+    v = v + timestep * dv; //# solving/updating v and w
+    w = w + timestep * dw;
+    jfi = -v * p * (u - uc) * (1.f - u) / td;
+    jso = u * (1.f - p) / to + p / tr;
+    jsi = -w * (1.f + tanh(xk * (u - ucsi))) / (2.f * tsi);
+
+    // // float r = 4.;
+    // if //(pow(float(x)-128.,2.) + pow(float(y)-64.,2.) <= pow(r,2.)
+    //     (abs(x - 128) < 16 && (y < 64 - 1 || y > 64 + 1))
+    // //( abs(x-128) < 4 && (y > 0 && y < 32 || y > 32+2 && y <= 64+60) )
+    // //   ( abs(x-128.) < 2. && y > 64 && y <= 64+8+4) //spyglys y:
+    // //   kord+r+spyglioIlgis
+    // { // pridedam nesuzadinamas last.
+    //   //  float R_Leak = .5e6f/5.f;//10e9f; //Ohm
+    //   float g_Leak = 5.1e-7f; // 1/R_Leak;//2e-8f;//*10000.f;
+    //   float J_Leak =
+    //       u * (Vfi - V0) * g_Leak / (6.3e-12f * 1e6f / (Area / 5.)) *
+    //       1e3f; // Area/5 kiek fibrobl. plotas mazesnis uz kardiomioc.
+    //   J_ion[adr] = -J_Leak; //*1e6 F->uF,*1e3, for compability with fenton
+    //   current units
+    // } else {
+    // float R_Leak = 10e9f;      // Ohm
+    // float g_Leak = 1 / R_Leak; // 2e-8f;//*10000.f;
+    //   float J_Leak = u * (Vfi - V0) * g_Leak / (64e-12f * 1e6f / Area) *
+    //   1e3f;
+    J_ion[adr] = -(jfi + jso + jsi); // + J_Leak);
+    // }
+
+    //# u skaiciavimas perkeltas i kernel2
+    v_[adr] = v;
+    w_[adr] = w;
+    //# V = u*(15e-3 - -85e-3) + -85e-3 # u pavertimui i V, pagal fenton
+    float dW = 0, dNW = 0, dN = 0, dNE = 0, dE = 0, dSE = 0, dS = 0, dSW = 0;
+
+    int xL = int(x) - 1;
+    int xR = int(x) + 1;
+    int yU = int(y) + 1; // up
+    if (xL == -1)        // periodic boundary left
+      // xL = int(size.x)-1; // take x on right
+      xL = 0;                      // isjungiam
+    if (xR == int(size.x) - 1 + 1) // periodic boundary right
+                                   //			xR = 0;
+      xR = int(size.x) - 2;        // isjungiam
+    if (yU == int(size.y) - 1 + 1) // periodic boundary right
+                                   //			yU = 0;
+      yU = int(size.y) - 1;        // isjungiam
+
+    dW = u_[y * size.x + xL] - u; // dW = u_[y*size.x + x - 1] - u;
+    if (y % 2 == 0)               // lygines (iskaitant 0)
+    {
+      dNE = u_[yU * size.x + x] - u;  // dNE = u_[(y + 1)*size.x+x] - u;
+      dNW = u_[yU * size.x + xL] - u; // dNW = u_[(y + 1)*size.x+x - 1] - u;
+    } else                            // nelygines (when y % 2 != 0
+    {
+      dNW = u_[yU * size.x + x] - u;  // dNW = u_[(y + 1)*size.x+x] - u;
+      dNE = u_[yU * size.x + xR] - u; // dNE = u_[(y + 1)*size.x+x+1] - u;
+    }
+
+    float VjW = dW * (Vfi - V0);
+    float VjNW = dNW * (Vfi - V0);
+    float VjNE = dNE * (Vfi - V0);
+
+    // if (gjModelEnabled)
+    {
+      int skip = 10; // iter skip factor for speeup
+      if (i == 0) {
+        // mc4sm_ss(0, (VjW) *1e3);
+        // mc4sm_ss(1, (VjNW) *1e3);
+        // mc4sm_ss(3, (VjNE) *1e3);
+        // float p[4] = float[](0.,0.,0.,0.);
+        gj[y * size.x * 3 + x * 3 + 0] = mc4sm_ss(0, 0 * 1e3); // 0.);
+        gj[y * size.x * 3 + x * 3 + 1] = mc4sm_ss(1, 0 * 1e3); // 0.);
+        gj[y * size.x * 3 + x * 3 + 2] = mc4sm_ss(2, 0 * 1e3); // 0.);
+      } else if (i % skip == 0 && gjModelEnabled) {
+        // gj[y*size.x*3+x*3 + 0] = mc4sm(0, (VjW) *1e3, dt_sim*10.);
+        // gj[y*size.x*3+x*3 + 1] = mc4sm(1, (VjNW) *1e3, dt_sim*10.);
+        // gj[y*size.x*3+x*3 + 2] = mc4sm(2, (VjNE) *1e3, dt_sim*10.);
+        gj[y * size.x * 3 + x * 3 + 0] =
+            mc4sm(0, (VjW)*1e3, dt_sim * skip * 0.001);
+        gj[y * size.x * 3 + x * 3 + 1] =
+            mc4sm(1, (VjNW)*1e3, dt_sim * skip * 0.001);
+        gj[y * size.x * 3 + x * 3 + 2] =
+            mc4sm(2, (VjNE)*1e3, dt_sim * skip * 0.001);
+        //          mc4sm(0, (VjW) *1e3, dt_sim*10.);
+        //  mc4sm(1, (VjNW) *1e3, dt_sim*10.);
+        //  mc4sm(2, (VjNE) *1e3, dt_sim*10.);
+      }
+    }
+
+    float IgjW = VjW * gj[y * size.x * 3 + x * 3 + 0] *
+                 1e3; //*1e3, for compability with fenton current units
+    float IgjNW = VjNW * gj[y * size.x * 3 + x * 3 + 1] * 1e3;
+    float IgjNE = VjNE * gj[y * size.x * 3 + x * 3 + 2] * 1e3;
+    J_gj[y * size.x * 3 + x * 3] = IgjW / (C);
+    J_gj[y * size.x * 3 + x * 3 + 1] = IgjNW / (C);
+    J_gj[y * size.x * 3 + x * 3 + 2] = IgjNE / (C);
+  }
+}

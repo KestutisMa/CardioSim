@@ -1,0 +1,5 @@
+__pychache__/
+build/
+trynimui-perziureti/
+*.csv
+fentonControl_pb2*
