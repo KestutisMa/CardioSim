@@ -1,5 +1,8 @@
 __pychache__/
 build/
-trynimui-perziureti/
+bkp/
+trink/
+results/
+*.dll
 *.csv
 fentonControl_pb2*

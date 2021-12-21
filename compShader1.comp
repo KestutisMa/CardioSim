@@ -3,23 +3,22 @@
 #define BLOCK_SIZE_Y 1 // butina del find-replace in shader.cpp
 layout(local_size_x = BLOCK_SIZE_X, local_size_y = BLOCK_SIZE_Y) in;
 
-layout(binding = 3, std430) buffer b1 {
-  float u_[];
-}; // 1,2,3 bufferiai jau paskirti
+layout(binding = 3, std430) buffer b1 { float u_[]; }; // 1,2,3 bufferiai jau paskirti
 layout(binding = 4, std430) buffer b2 { float v_[]; };
 layout(binding = 5, std430) buffer b3 { float w_[]; };
 layout(binding = 6, std430) buffer b4 { float J_ion[]; };
 layout(binding = 7, std430) buffer b5 { float J_gj[]; };
 layout(binding = 10, std430) buffer b6 { float gj[]; };        // W,NW,NE
 layout(binding = 12, std430) buffer b_par { float gj_par[]; }; // gj parameters
-layout(binding = 13, std430) buffer b_gj_p {
-  float gj_p[];
-}; // markov state matices for each gj
-layout(binding = 15, std430) buffer b_dbg { float dbg[]; };
+layout(binding = 13, std430) buffer b_gj_p {  float gj_p[]; }; // markov state matices for each gj
 
-layout(location = 20) uniform uvec2 size; // XY
+layout(binding = 15, std430) buffer b_dbg { float dbg[]; };
+layout(binding = 11, std430) buffer buff_gj_reg { float gj_reg[]; };
+
+layout(location = 20) uniform ivec2 size; // XY
 layout(location = 21) uniform float dt_sim;
 layout(location = 22) uniform uint i; // butina, mc36ss, ---nebutina, debug
+layout(location = 25) uniform uint i_frame_in_current_chunk; // iteration
 layout(location = 27) uniform bool gjModelEnabled;
 
 // trink
@@ -73,11 +72,10 @@ float r8_big() {
 
 float r8_log_2(float x) {
   float value;
-
   if (x == 0.0) {
     value = -r8_big();
   } else {
-    value = log(abs(x)) / log(2.0);
+    value = log(float(abs(x))) / log(2.0);
   }
 
   return value;
@@ -352,55 +350,29 @@ void gauss(float mat[4 * 5], inout float x[4]) {
   }
 }
 
-float mc4sm_ss(int gj_sel, float Vj) {
+float mc4sm_ss(int gj_sel, float Vj, float limit) {
   // globals: reads gj_par, adr_par, adr, p
   //		   writes: gj_p
 
-  uint adr_par =
-      adr * 3 * 2 * 7 +
-      gj_sel * 2 * 7; // *3: W,NW,NE; *7: parameters count; *2:gates count
+  uint adr_par = adr * 3 * 2 * 7 + gj_sel * 2 * 7; // *3: W,NW,NE; *7: parameters count; *2:gates count
   uint adr_p = adr * 3 * 4 + gj_sel * 4; // gj_p adr
 
   // % Vj gating parameters
-  float lamda1 =
-      gj_par[adr_par + 0 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing
-                                   // intensity rates when V=V0, in s^-1
-  float A_alfa1 =
-      gj_par[adr_par + 0 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate
-                                   // sensitivities to voltage, in mV^-1
-  float A_beta1 =
-      gj_par[adr_par + 0 * 7 + 2]; // A_beta1 = par(1,3); % opening rate
-                                   // sensitivities to voltage, in mV^-1
-  float V_01 =
-      gj_par[adr_par + 0 * 7 + 3]; // V_01 = par(1,4);    % voltages, when
-                                   // opening rate equals closing rate, in mV
+  float lamda1 = gj_par[adr_par + 0 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing intensity rates when V=V0, in s^-1
+  float A_alfa1 = gj_par[adr_par + 0 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate sensitivities to voltage, in mV^-1
+  float A_beta1 = gj_par[adr_par + 0 * 7 + 2]; // A_beta1 = par(1,3); % opening rate  sensitivities to voltage, in mV^-1
+  float V_01 = gj_par[adr_par + 0 * 7 + 3]; // V_01 = par(1,4);    % voltages, when  opening rate equals closing rate, in mV
   float P_g1 = gj_par[adr_par + 0 * 7 + 4]; // P_g1 = par(1,5);
-  float G_o1 =
-      gj_par[adr_par + 0 * 7 +
-             5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
-  float G_c1 =
-      gj_par[adr_par + 0 * 7 +
-             6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
+  float G_o1 = gj_par[adr_par + 0 * 7 + 5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
+  float G_c1 = gj_par[adr_par + 0 * 7 + 6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
 
-  float lamda2 =
-      gj_par[adr_par + 1 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing
-                                   // intensity rates when V=V0, in s^-1
-  float A_alfa2 =
-      gj_par[adr_par + 1 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate
-                                   // sensitivities to voltage, in mV^-1
-  float A_beta2 =
-      gj_par[adr_par + 1 * 7 + 2]; // A_beta1 = par(1,3); % opening rate
-                                   // sensitivities to voltage, in mV^-1
-  float V_02 =
-      gj_par[adr_par + 1 * 7 + 3]; // V_01 = par(1,4);    % voltages, when
-                                   // opening rate equals closing rate, in mV
+  float lamda2 = gj_par[adr_par + 1 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing intensity rates when V=V0, in s^-1
+  float A_alfa2 = gj_par[adr_par + 1 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate sensitivities to voltage, in mV^-1
+  float A_beta2 = gj_par[adr_par + 1 * 7 + 2]; // A_beta1 = par(1,3); % opening rate sensitivities to voltage, in mV^-1
+  float V_02 = gj_par[adr_par + 1 * 7 + 3]; // V_01 = par(1,4);    % voltages, when opening rate equals closing rate, in mV
   float P_g2 = gj_par[adr_par + 1 * 7 + 4]; // P_g1 = par(1,5);
-  float G_o2 =
-      gj_par[adr_par + 1 * 7 +
-             5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
-  float G_c2 =
-      gj_par[adr_par + 1 * 7 +
-             6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
+  float G_o2 = gj_par[adr_par + 1 * 7 + 5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
+  float G_c2 = gj_par[adr_par + 1 * 7 + 6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
 
   float V[4][2] =
       float[][](float[](Vj * G_o2 / (G_o1 + G_o2), -Vj * G_o1 / (G_o1 + G_o2)),
@@ -409,22 +381,35 @@ float mc4sm_ss(int gj_sel, float Vj) {
                 float[](Vj * G_c2 / (G_c1 + G_c2), -Vj * G_c1 / (G_c1 + G_c2)));
 
   float Q[4 * 4] =
-      float[](-lamda2 * exp(A_beta2 * P_g2 * (V[0][1] - V_02)) -
-                  lamda1 * exp(A_beta1 * P_g1 * (V[0][0] - V_01)),
-              lamda2 * exp(A_beta2 * P_g2 * (V[0][1] - V_02)),
-              lamda1 * exp(A_beta1 * P_g1 * (V[0][0] - V_01)), 0.,
-              lamda2 * exp(-A_alfa2 * P_g2 * (V[1][1] - V_02)),
-              -lamda2 * exp(-A_alfa2 * P_g2 * (V[1][1] - V_02)) -
-                  lamda1 * exp(A_beta1 * P_g1 * (V[1][0] - V_01)),
-              0., lamda1 * exp(A_beta1 * P_g1 * (V[1][0] - V_01)),
-              lamda1 * exp(-A_alfa1 * P_g1 * (V[2][0] - V_01)), 0.,
-              -lamda1 * exp(-A_alfa1 * P_g1 * (V[2][0] - V_01)) -
-                  lamda2 * exp(A_beta2 * P_g2 * (V[2][1] - V_02)),
-              lamda2 * exp(A_beta2 * P_g2 * (V[2][1] - V_02)), 0.,
-              lamda1 * exp(-A_alfa1 * P_g1 * (V[3][0] - V_01)),
-              lamda2 * exp(-A_alfa2 * P_g2 * (V[3][1] - V_02)),
-              -lamda1 * exp(-A_alfa1 * P_g1 * (V[3][0] - V_01)) -
-                  lamda2 * exp(-A_alfa2 * P_g2 * (V[3][1] - V_02)));
+      float[](-lamda2 * exp(float(A_beta2 * P_g2 * (V[0][1] - V_02))) -
+                  lamda1 * exp(float(A_beta1 * P_g1 * (V[0][0] - V_01))),
+              lamda2 * exp(float(A_beta2 * P_g2 * (V[0][1] - V_02))),
+              lamda1 * exp(float(A_beta1 * P_g1 * (V[0][0] - V_01))), 0.,
+              lamda2 * exp(float(-A_alfa2 * P_g2 * (V[1][1] - V_02))),
+              -lamda2 * exp(float(-A_alfa2 * P_g2 * (V[1][1] - V_02))) -
+                  lamda1 * exp(float(A_beta1 * P_g1 * (V[1][0] - V_01))),
+              0., lamda1 * exp(float(A_beta1 * P_g1 * (V[1][0] - V_01))),
+              lamda1 * exp(float(-A_alfa1 * P_g1 * (V[2][0] - V_01))), 0.,
+              -lamda1 * exp(float(-A_alfa1 * P_g1 * (V[2][0] - V_01))) -
+                  lamda2 * exp(float(A_beta2 * P_g2 * (V[2][1] - V_02))),
+              lamda2 * exp(float(A_beta2 * P_g2 * (V[2][1] - V_02))), 0.,
+              lamda1 * exp(float(-A_alfa1 * P_g1 * (V[3][0] - V_01))),
+              lamda2 * exp(float(-A_alfa2 * P_g2 * (V[3][1] - V_02))),
+              -lamda1 * exp(float(-A_alfa1 * P_g1 * (V[3][0] - V_01))) -
+                  lamda2 * exp(float(-A_alfa2 * P_g2 * (V[3][1] - V_02))));
+  
+  for (int i = 0; i < 4 * 4; i++)
+    if (Q[i] > limit)
+        Q[i] = limit;
+
+  float Q_sum[4] = {0,0,0,0};
+  for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++)
+          Q_sum[i] += Q[i * 4 + j];
+  for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++)
+          if (i == j)
+              Q[i * 4 + j] -= Q_sum[i];
 
   float ggg[4] =
       float[](G_o1 * G_o2 / (G_o1 + G_o2), G_o1 * G_c2 / (G_o1 + G_c2),
@@ -454,56 +439,30 @@ float mc4sm_ss(int gj_sel, float Vj) {
   return gj;
 }
 
-float mc4sm(int gj_sel, float Vj, float dt) {
+float mc4sm(int gj_sel, float Vj, float dt, float limit) {
   // globals: reads gj_par, adr_par, adr, p, dt_sim
   //		   writes/reads gj_p
 
   // float dt = dt_sim;
-  uint adr_par =
-      adr * 3 * 2 * 7 +
-      gj_sel * 2 * 7; // *3: W,NW,NE; *7: parameters count; *2:gates count
+  uint adr_par = adr * 3 * 2 * 7 + gj_sel * 2 * 7; // *3: W,NW,NE; *7: parameters count; *2:gates count
   uint adr_p = adr * 3 * 4 + gj_sel * 4; // gj_p adr
 
   // % Vj gating parameters
-  float lamda1 =
-      gj_par[adr_par + 0 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing
-                                   // intensity rates when V=V0, in s^-1
-  float A_alfa1 =
-      gj_par[adr_par + 0 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate
-                                   // sensitivities to voltage, in mV^-1
-  float A_beta1 =
-      gj_par[adr_par + 0 * 7 + 2]; // A_beta1 = par(1,3); % opening rate
-                                   // sensitivities to voltage, in mV^-1
-  float V_01 =
-      gj_par[adr_par + 0 * 7 + 3]; // V_01 = par(1,4);    % voltages, when
-                                   // opening rate equals closing rate, in mV
+  float lamda1 = gj_par[adr_par + 0 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing intensity rates when V=V0, in s^-1
+  float A_alfa1 = gj_par[adr_par + 0 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate, sensitivities to voltage, in mV^-1
+  float A_beta1 = gj_par[adr_par + 0 * 7 + 2]; // A_beta1 = par(1,3); % opening rate, sensitivities to voltage, in mV^-1
+  float V_01 = gj_par[adr_par + 0 * 7 + 3]; // V_01 = par(1,4);    % voltages, when opening rate equals closing rate, in mV
   float P_g1 = gj_par[adr_par + 0 * 7 + 4]; // P_g1 = par(1,5);
-  float G_o1 =
-      gj_par[adr_par + 0 * 7 +
-             5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
-  float G_c1 =
-      gj_par[adr_par + 0 * 7 +
-             6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
+  float G_o1 = gj_par[adr_par + 0 * 7 + 5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
+  float G_c1 = gj_par[adr_par + 0 * 7 + 6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
 
-  float lamda2 =
-      gj_par[adr_par + 1 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing
-                                   // intensity rates when V=V0, in s^-1
-  float A_alfa2 =
-      gj_par[adr_par + 1 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate
-                                   // sensitivities to voltage, in mV^-1
-  float A_beta2 =
-      gj_par[adr_par + 1 * 7 + 2]; // A_beta1 = par(1,3); % opening rate
-                                   // sensitivities to voltage, in mV^-1
-  float V_02 =
-      gj_par[adr_par + 1 * 7 + 3]; // V_01 = par(1,4);    % voltages, when
-                                   // opening rate equals closing rate, in mV
+  float lamda2 = gj_par[adr_par + 1 * 7 + 0]; // lamda1 = par(1,1);  % opening and closing intensity rates when V=V0, in s^-1
+  float A_alfa2 = gj_par[adr_par + 1 * 7 + 1]; // A_alfa1 = par(1,2); % closing rate sensitivities to voltage, in mV^-1
+  float A_beta2 = gj_par[adr_par + 1 * 7 + 2]; // A_beta1 = par(1,3); % opening rate sensitivities to voltage, in mV^-1
+  float V_02 = gj_par[adr_par + 1 * 7 + 3]; // V_01 = par(1,4);    % voltages, when opening rate equals closing rate, in mV
   float P_g2 = gj_par[adr_par + 1 * 7 + 4]; // P_g1 = par(1,5);
-  float G_o2 =
-      gj_par[adr_par + 1 * 7 +
-             5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
-  float G_c2 =
-      gj_par[adr_par + 1 * 7 +
-             6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
+  float G_o2 = gj_par[adr_par + 1 * 7 + 5]; // G_o1 = par(1,6);  % maximum open state conductances, in nS
+  float G_c2 = gj_par[adr_par + 1 * 7 + 6]; // G_c1 = par(1,7);  % minimum closed state conductances, in nS
 
   float V[4][2] =
       float[][](float[](Vj * G_o2 / (G_o1 + G_o2), -Vj * G_o1 / (G_o1 + G_o2)),
@@ -512,22 +471,35 @@ float mc4sm(int gj_sel, float Vj, float dt) {
                 float[](Vj * G_c2 / (G_c1 + G_c2), -Vj * G_c1 / (G_c1 + G_c2)));
 
   float Q[4 * 4] =
-      float[](-lamda2 * exp(A_beta2 * P_g2 * (V[0][1] - V_02)) -
-                  lamda1 * exp(A_beta1 * P_g1 * (V[0][0] - V_01)),
-              lamda2 * exp(A_beta2 * P_g2 * (V[0][1] - V_02)),
-              lamda1 * exp(A_beta1 * P_g1 * (V[0][0] - V_01)), 0.,
-              lamda2 * exp(-A_alfa2 * P_g2 * (V[1][1] - V_02)),
-              -lamda2 * exp(-A_alfa2 * P_g2 * (V[1][1] - V_02)) -
-                  lamda1 * exp(A_beta1 * P_g1 * (V[1][0] - V_01)),
-              0., lamda1 * exp(A_beta1 * P_g1 * (V[1][0] - V_01)),
-              lamda1 * exp(-A_alfa1 * P_g1 * (V[2][0] - V_01)), 0.,
-              -lamda1 * exp(-A_alfa1 * P_g1 * (V[2][0] - V_01)) -
-                  lamda2 * exp(A_beta2 * P_g2 * (V[2][1] - V_02)),
-              lamda2 * exp(A_beta2 * P_g2 * (V[2][1] - V_02)), 0.,
-              lamda1 * exp(-A_alfa1 * P_g1 * (V[3][0] - V_01)),
-              lamda2 * exp(-A_alfa2 * P_g2 * (V[3][1] - V_02)),
-              -lamda1 * exp(-A_alfa1 * P_g1 * (V[3][0] - V_01)) -
-                  lamda2 * exp(-A_alfa2 * P_g2 * (V[3][1] - V_02)));
+      float[](-lamda2 * exp(float(A_beta2 * P_g2 * (V[0][1] - V_02))) -
+                  lamda1 * exp(float(A_beta1 * P_g1 * (V[0][0] - V_01))),
+              lamda2 * exp(float(A_beta2 * P_g2 * (V[0][1] - V_02))),
+              lamda1 * exp(float(A_beta1 * P_g1 * (V[0][0] - V_01))), 0.,
+              lamda2 * exp(float(-A_alfa2 * P_g2 * (V[1][1] - V_02))),
+              -lamda2 * exp(float(-A_alfa2 * P_g2 * (V[1][1] - V_02))) -
+                  lamda1 * exp(float(A_beta1 * P_g1 * (V[1][0] - V_01))),
+              0., lamda1 * exp(float(A_beta1 * P_g1 * (V[1][0] - V_01))),
+              lamda1 * exp(float(-A_alfa1 * P_g1 * (V[2][0] - V_01))), 0.,
+              -lamda1 * exp(float(-A_alfa1 * P_g1 * (V[2][0] - V_01))) -
+                  lamda2 * exp(float(A_beta2 * P_g2 * (V[2][1] - V_02))),
+              lamda2 * exp(float(A_beta2 * P_g2 * (V[2][1] - V_02))), 0.,
+              lamda1 * exp(float(-A_alfa1 * P_g1 * (V[3][0] - V_01))),
+              lamda2 * exp(float(-A_alfa2 * P_g2 * (V[3][1] - V_02))),
+              -lamda1 * exp(float(-A_alfa1 * P_g1 * (V[3][0] - V_01))) -
+                  lamda2 * exp(float(-A_alfa2 * P_g2 * (V[3][1] - V_02))));
+  
+  for (int i = 0; i < 4 * 4; i++)
+      if (Q[i] > limit)
+          Q[i] = limit;
+
+  float Q_sum[4] = {0,0,0,0};
+  for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++)
+          Q_sum[i] += Q[i * 4 + j];
+  for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++)
+          if (i == j)
+              Q[i * 4 + j] -= Q_sum[i];
 
   for (int i = 0; i < 4; i++)
     for (int j = 0; j < 4; j++)
@@ -535,6 +507,11 @@ float mc4sm(int gj_sel, float Vj, float dt) {
 
   float P[4 * 4];
   P = r8mat_expm1(4, Q);
+
+  // //dbg
+  // for (int k = 0; k < 4; k++)
+  //   for (int j = 0; j < 4; j++)
+  //     dbg[4*4*i + k*4+j] = P[k*4+j];
 
   float p_next[4];
   for (int k = 0; k < 4; k++)
@@ -568,13 +545,13 @@ void main() {
     float twm = 41.0f;
     float td = 0.25; // 0.25 orig; mazesnis greitina Na srove ir didina Vj, bet
                      // mazina uzlaikyma
-    float to = 12.5; // 12.5
-    float tr = 33.3; // 33.3
-    float tsi = 30.0;
-    float xk = 10.0;
-    float ucsi = 0.85;
-    float uc = 0.13;
-    float uv = 0.04;
+    float to = 12.5f; // 12.5
+    float tr = 33.3f; // 33.3
+    float tsi = 30.0f;
+    float xk = 10.0f;
+    float ucsi = 0.85f;
+    float uc = 0.13f;
+    float uv = 0.04f;
     float Vfi = 15e-3f; //#nernst potential of fast gate
     float V0 = -85e-3f; //#resting membrane potential
 
@@ -627,7 +604,7 @@ void main() {
     w = w + timestep * dw;
     jfi = -v * p * (u - uc) * (1.f - u) / td;
     jso = u * (1.f - p) / to + p / tr;
-    jsi = -w * (1.f + tanh(xk * (u - ucsi))) / (2.f * tsi);
+    jsi = -w * (1.f + tanh(float(xk * (u - ucsi)))) / (2.f * tsi);
 
     // // float r = 4.;
     // if //(pow(float(x)-128.,2.) + pow(float(y)-64.,2.) <= pow(r,2.)
@@ -655,69 +632,195 @@ void main() {
     v_[adr] = v;
     w_[adr] = w;
     //# V = u*(15e-3 - -85e-3) + -85e-3 # u pavertimui i V, pagal fenton
-    float dW = 0, dNW = 0, dN = 0, dNE = 0, dE = 0, dSE = 0, dS = 0, dSW = 0;
+    float dW = 0, dNW = 0, dN = 0, dNE = 0, dE = 0, dSE = 0, dS = 0, dSW = 0; // kai float
+    //TODO ^^ galbut galima neskaiciuoti du kart, nes pvz dW ir dE sekancioje lasteleje yra tokie pat tiek priesingo zenklo
 
-    int xL = int(x) - 1;
-    int xR = int(x) + 1;
+    int xL = int(x) - 1; //left
+    int xR = int(x) + 1; // right
     int yU = int(y) + 1; // up
-    if (xL == -1)        // periodic boundary left
-      // xL = int(size.x)-1; // take x on right
-      xL = 0;                      // isjungiam
-    if (xR == int(size.x) - 1 + 1) // periodic boundary right
-                                   //			xR = 0;
-      xR = int(size.x) - 2;        // isjungiam
-    if (yU == int(size.y) - 1 + 1) // periodic boundary right
-                                   //			yU = 0;
-      yU = int(size.y) - 1;        // isjungiam
+    // int yD = int(y) - 1; // down
+    if (xL == -1)        //  boundary left
+      xL = int(size.x)-1; // take x on right, periodic
+      // xL = 0;                      // non-periodic
+    if (xR == int(size.x)) // boundary right, + 1 ar + 0 ? 
+			xR = 0; //periodic
+      // xR = int(size.x) - 1;        // non-periodic
+    // if (yU == int(size.y) - 1 + 1) // boundary up
+    // if (yU == int(size.y) - 1 ) // boundary up, kodel -1? (turetu buti 0)
+    if (yU == int(size.y) ) // boundary up, kodel -1? (turetu buti 0)
+			yU = 0; //periodic
+      // yU = int(size.y) - 1;        // non-periodic
+    // if (yD == - 1) // boundary up
+    //   // yL = int(size.y)-1; // take y on up, periodic
+    //   yD = 0;        // non-periodic
 
     dW = u_[y * size.x + xL] - u; // dW = u_[y*size.x + x - 1] - u;
+    // dE = u_[y * size.x + xR] - u; // dW = u_[y*size.x + x - 1] - u;
+    
+    // if (y < size.y - 1)
     if (y % 2 == 0)               // lygines (iskaitant 0)
-    {
-      dNE = u_[yU * size.x + x] - u;  // dNE = u_[(y + 1)*size.x+x] - u;
-      dNW = u_[yU * size.x + xL] - u; // dNW = u_[(y + 1)*size.x+x - 1] - u;
-    } else                            // nelygines (when y % 2 != 0
-    {
-      dNW = u_[yU * size.x + x] - u;  // dNW = u_[(y + 1)*size.x+x] - u;
-      dNE = u_[yU * size.x + xR] - u; // dNE = u_[(y + 1)*size.x+x+1] - u;
-    }
+      {
+        dNW = u_[yU * size.x + xL] - u; // dNW = u_[(y + 1)*size.x+x - 1] - u;        
+        dNE = u_[yU * size.x + x] - u;  // dNE = u_[(y + 1)*size.x+x] - u;
+        // dSE = u_[yD * size.x + xL+1] - u;  // dNE = u_[(y + 1)*size.x+x] - u;
+        // dSW = u_[yD * size.x + xL] - u; // dNW = u_[(y + 1)*size.x+x - 1] - u;
+      } else {                           // nelygines (when y % 2 != 0
+        dNW = u_[yU * size.x + x] - u;  // dNW = u_[(y + 1)*size.x+x] - u;     
+        dNE = u_[yU * size.x + xR] - u; // dNE = u_[(y + 1)*size.x+x+1] - u;  
+        // dNW = u_[yU * size.x + xR-1] - u;  // dNW = u_[(y + 1)*size.x+x] - u;
+        // dNE = u_[yU * size.x + xR] - u; // dNE = u_[(y + 1)*size.x+x+1] - u;
+      }
+      // sujungima (numeruojama pagal dekarto koordinaciu sistema)
+      // o  o   o
+      //  o   o  o
+      // o  o  o
+
+      // pries periodic ivedima
+    // if (y % 2 == 0)               // lygines (iskaitant 0)
+    //   {
+    //     dNE = u_[yU * size.x + x] - u;  // dNE = u_[(y + 1)*size.x+x] - u;
+    //     if (x > 0) 
+    //       dNW = u_[yU * size.x + x-1] - u; // dNW = u_[(y + 1)*size.x+x - 1] - u;
+    //     // dSE = u_[yD * size.x + xL+1] - u;  // dNE = u_[(y + 1)*size.x+x] - u;
+    //     // dSW = u_[yD * size.x + xL] - u; // dNW = u_[(y + 1)*size.x+x - 1] - u;
+    //   } else {                           // nelygines (when y % 2 != 0
+    //     dNW = u_[yU * size.x + x] - u;  // dNW = u_[(y + 1)*size.x+x] - u;     
+    //     if (x < size.x - 1)
+    //       dNE = u_[yU * size.x + x+1] - u; // dNE = u_[(y + 1)*size.x+x+1] - u;  
+    //     // dNW = u_[yU * size.x + xR-1] - u;  // dNW = u_[(y + 1)*size.x+x] - u;
+    //     // dNE = u_[yU * size.x + xR] - u; // dNE = u_[(y + 1)*size.x+x+1] - u;
+    //   }
+
+    // geras veikia
+    // if (y % 2 == 0)               // lygines (iskaitant 0)
+    // {
+    //   dNE = u_[yU * size.x + xL+1] - u;  // dNE = u_[(y + 1)*size.x+x] - u;
+    //   dNW = u_[yU * size.x + xL] - u; // dNW = u_[(y + 1)*size.x+x - 1] - u;
+    //   // dSE = u_[yD * size.x + xL+1] - u;  // dNE = u_[(y + 1)*size.x+x] - u;
+    //   // dSW = u_[yD * size.x + xL] - u; // dNW = u_[(y + 1)*size.x+x - 1] - u;
+    // } else {                           // nelygines (when y % 2 != 0
+    //   dNW = u_[yU * size.x + xR-1] - u;  // dNW = u_[(y + 1)*size.x+x] - u;
+    //   dNE = u_[yU * size.x + xR] - u; // dNE = u_[(y + 1)*size.x+x+1] - u;
+    //   // dNW = u_[yU * size.x + xR-1] - u;  // dNW = u_[(y + 1)*size.x+x] - u;
+    //   // dNE = u_[yU * size.x + xR] - u; // dNE = u_[(y + 1)*size.x+x+1] - u;
+    // }
+
+    // yU = int(y) +1;    
+    // if (y == 0) {
+    //    u_[y * size.x + x] = 1;
+    // }
+    // if (yU == int(size.y) - 1 +1 ) {
+    // // if (y == 0 ) {
+    //         yU = 0;
+    //   // dNE = 1;
+    //   // dNW =  1;
+    //   u_[y * size.x + x] = u_[yU * size.x + x];
+    //   // u_[y * size.x + x] = 1;
+    //   // dW =  -1;
+    // }
 
     float VjW = dW * (Vfi - V0);
+    // float VjE = dE * (Vfi - V0);
     float VjNW = dNW * (Vfi - V0);
     float VjNE = dNE * (Vfi - V0);
+    // float VjSW = dSW * (Vfi - V0);
+    // float VjSE = dSE * (Vfi - V0);
 
-    // if (gjModelEnabled)
-    {
+  // bandymai
+    // float VjW = 0;
+    // float VjNW = 0;
+    // float VjNE = 0;    
+
+
+    // { // CV-gj grafikui
+
+    //     // float t = i*dt_sim;
+    //     float period = 250; // ms
+    //     if ( (i % int(period / dt_sim) ) == 0) { // nebutina?: + 1 nes reikia zinoti, dar pries impulsa 
+    //       int impulse_nr = int(i / (period / dt_sim));
+    //       float step = 5e-9f;
+    //       float g =40e-9f + step * impulse_nr;
+
+    //       const float A = 1.f; // aniz
+    //       if ( !((x > 10 && (x % 20 > 0) && (x % 20 <= 2) )) ) // kitu last laidumas
+    //         g = 600e-9;
+
+    //       gj[y * size.x * 3 + x * 3 + 0] = g;
+    //       // gj[y * size.x * 3 + x * 3 + 1] = g / A;
+    //       // gj[y * size.x * 3 + x * 3 + 2] = g / A;
+    //       gj[y * size.x * 3 + x * 3 + 1] = g / A;
+    //       gj[y * size.x * 3 + x * 3 + 2] = g / A;
+
+    //     }
+    // }
+
+    
+    if (gjModelEnabled
+    // if (false
+          //harcoded: jei nelaidzios PJ tai neperskaiciuojam
+         && gj[y * size.x * 3 + x * 3 + 0] > 1e-25f
+         && gj[y * size.x * 3 + x * 3 + 1] > 1e-25f
+         && gj[y * size.x * 3 + x * 3 + 2] > 1e-25f        
+    )
+    { //
       int skip = 10; // iter skip factor for speeup
+      // NEREIKIA!!!! const int itersPerFrame = 10; //FIXME!!!!!! perduoti per uniform
+      // const float limit = 0.1717f;
+      const float limit = 4.83;
+      // const float limit = 0.1135;
+        float A = 2.f; // aniz
+        float g_parallel = 5e-9f; //parallel gj (non-gated)
+        // float g_parallel = 0.6e-8f/A; //parallel gj (non-gated) trink
+        // g_parallel *= 1e-18;  // isjungiam parallel      
       if (i == 0) {
         // mc4sm_ss(0, (VjW) *1e3);
         // mc4sm_ss(1, (VjNW) *1e3);
         // mc4sm_ss(3, (VjNE) *1e3);
         // float p[4] = float[](0.,0.,0.,0.);
-        gj[y * size.x * 3 + x * 3 + 0] = mc4sm_ss(0, 0 * 1e3); // 0.);
-        gj[y * size.x * 3 + x * 3 + 1] = mc4sm_ss(1, 0 * 1e3); // 0.);
-        gj[y * size.x * 3 + x * 3 + 2] = mc4sm_ss(2, 0 * 1e3); // 0.);
+        gj[y * size.x * 3 + x * 3 + 0] = mc4sm_ss(0, 0 * 1e3, limit)+ g_parallel;
+        gj[y * size.x * 3 + x * 3 + 1] = mc4sm_ss(1, 0 * 1e3, limit)+ g_parallel / A;
+        gj[y * size.x * 3 + x * 3 + 2] = mc4sm_ss(2, 0 * 1e3, limit)+ g_parallel / A;
       } else if (i % skip == 0 && gjModelEnabled) {
         // gj[y*size.x*3+x*3 + 0] = mc4sm(0, (VjW) *1e3, dt_sim*10.);
         // gj[y*size.x*3+x*3 + 1] = mc4sm(1, (VjNW) *1e3, dt_sim*10.);
         // gj[y*size.x*3+x*3 + 2] = mc4sm(2, (VjNE) *1e3, dt_sim*10.);
-        gj[y * size.x * 3 + x * 3 + 0] =
-            mc4sm(0, (VjW)*1e3, dt_sim * skip * 0.001);
-        gj[y * size.x * 3 + x * 3 + 1] =
-            mc4sm(1, (VjNW)*1e3, dt_sim * skip * 0.001);
-        gj[y * size.x * 3 + x * 3 + 2] =
-            mc4sm(2, (VjNE)*1e3, dt_sim * skip * 0.001);
+
+        // float dt_sim = 0.02;
+
+          // gj[y * size.x * 3 + x * 3 + 0] = mc4sm_ss(0, 0.01 * 1e3, limit); // 0.);
+          // gj[y * size.x * 3 + x * 3 + 0] = mc4sm(0, 0.1, dt_sim * skip * 0.001, limit);
+          
+          // gj[y * size.x * 3 + x * 3 + 0] = mc4sm(0, 80.f, 0.0983f , limit);
+          // gj[y * size.x * 3 + x * 3 + 0] = mc4sm(0, 80.f, dt_sim * 0.001f * skip, limit);
+          // gj[y * size.x * 3 + x * 3 + 1] = mc4sm(1, (VjNW)*1e3, dt_sim * skip * 0.001, limit) + g_parallel;
+          // gj[y * size.x * 3 + x * 3 + 2] = mc4sm(2, (VjNE)*1e3, dt_sim * skip * 0.001, limit) + g_parallel;
+          
+          // geros
+          gj[y * size.x * 3 + x * 3 + 0] = mc4sm(0, (VjW)*1000.f, dt_sim * skip * 0.001f, limit)  + g_parallel; // *0.001, ms->s nes dt_sim (is main()) yra ms, o mc4sm s
+          gj[y * size.x * 3 + x * 3 + 1] = mc4sm(1, (VjNW)*1000.f, dt_sim * skip * 0.001f, limit) + g_parallel / A;
+          gj[y * size.x * 3 + x * 3 + 2] = mc4sm(2, (VjNE)*1000.f, dt_sim * skip * 0.001f, limit) + g_parallel / A;
+
+          // gj[y * size.x * 3 + x * 3 + 0] =g_parallel*A;
+          // gj[y * size.x * 3 + x * 3 + 1] =g_parallel;
+          // gj[y * size.x * 3 + x * 3 + 2] =g_parallel;
         //          mc4sm(0, (VjW) *1e3, dt_sim*10.);
         //  mc4sm(1, (VjNW) *1e3, dt_sim*10.);
         //  mc4sm(2, (VjNE) *1e3, dt_sim*10.);
       }
     }
 
-    float IgjW = VjW * gj[y * size.x * 3 + x * 3 + 0] *
-                 1e3; //*1e3, for compability with fenton current units
+    float IgjW = VjW * gj[y * size.x * 3 + x * 3 + 0] * 1e3; //*1e3, for compability with fenton current units
     float IgjNW = VjNW * gj[y * size.x * 3 + x * 3 + 1] * 1e3;
     float IgjNE = VjNE * gj[y * size.x * 3 + x * 3 + 2] * 1e3;
+    // IgjW *= 0;
+    // IgjNW *= 0;
+    // IgjNE *= 0;
     J_gj[y * size.x * 3 + x * 3] = IgjW / (C);
     J_gj[y * size.x * 3 + x * 3 + 1] = IgjNW / (C);
     J_gj[y * size.x * 3 + x * 3 + 2] = IgjNE / (C);
   }
+  //TODO: cia daro kiekviena i, bet galima tik as i_frame
+  gj_reg[i_frame_in_current_chunk*size.x*size.y*3 + y*size.x*3 + x*3 + 0] = gj[y * size.x * 3 + x * 3 + 0];//1*(i_frame+1);
+  gj_reg[i_frame_in_current_chunk*size.x*size.y*3 + y*size.x*3 + x*3 + 1] = gj[y * size.x * 3 + x * 3 + 1];//2*(i_frame+1);
+  gj_reg[i_frame_in_current_chunk*size.x*size.y*3 + y*size.x*3 + x*3 + 2] = gj[y * size.x * 3 + x * 3 + 2];//3*(i_frame+1);
 }

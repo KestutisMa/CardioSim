@@ -6,7 +6,25 @@
 	],
 	"settings": {
 		"files.associations": {
-			"*.inc": "cpp"
+			"*.inc": "cpp",
+			"queue": "cpp",
+			"random": "cpp",
+			"xstring": "cpp",
+			"vector": "cpp",
+			"xutility": "cpp"
 		}
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+
+			{
+				"name": "Python: Current File",
+				"type": "python",
+				"request": "launch",
+				"program": "${file}",
+				"console": "integratedTerminal"
+			}
+		]
 	}
 }

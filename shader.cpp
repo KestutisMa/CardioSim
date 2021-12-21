@@ -214,7 +214,7 @@ bool replace(std::string &str, const std::string &from, const std::string &to)
 	return true;
 }
 
-GLuint LoadComputeShader(const char *compute_file_path, int workGroupSize)
+GLuint LoadComputeShader(const char *compute_file_path, int workGroupSizeX, int workGroupSizeY)
 {
 	GLuint ComputeShaderID = glCreateShader(GL_COMPUTE_SHADER);
 	// Read the Compute Shader code from the file1
@@ -227,8 +227,8 @@ GLuint LoadComputeShader(const char *compute_file_path, int workGroupSize)
 	// 	ComputeShaderStream.close();
 	// 	ComputeShaderCode.clear();
 	ComputeShaderCode = Shadinclude::load(compute_file_path);
-	int blockSizeX = workGroupSize;
-	int blockSizeY = workGroupSize;
+	int blockSizeX = workGroupSizeX;
+	int blockSizeY = workGroupSizeY;
 	//X
 	string parName = std::string("BLOCK_SIZE_X");
 	int pos = ComputeShaderCode.find(parName);
