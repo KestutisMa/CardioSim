@@ -4,16 +4,34 @@
   // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
+    
     {
       "name": "(Windows) Launch",
-      "type": "cppdbg",
+      "type": "cppvsdbg",
       "request": "launch",
       "program": "${workspaceFolder}/build/Debug/fentonGjOpenGL.exe",
       "args": [],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],
-      "externalConsole": true
-    }
+      "console": "externalTerminal"
+    },
+    {
+      "name": "(Windows) Debug Release",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/RelWithDebInfo/fentonGjOpenGL.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "PATH",
+          "value": "${env:PATH};C:\\Miniconda3\\envs\\py39\\Library\\bin;C:\\OpenGL\\fentonGjOpenGL" //Set to whatever value you want.
+        }
+      ],
+      "externalConsole": false
+    },
+
   ]
 }

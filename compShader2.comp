@@ -11,14 +11,16 @@ layout(binding = 4, std430) buffer b2 { float v_[]; };
 layout(binding = 5, std430) buffer b3 { float w_[]; };
 layout(binding = 6, std430) buffer b4 { float J_ion[]; };
 layout(binding = 7, std430) buffer b5 { float J_gj[]; };
+layout(binding = 9, std430) buffer buff_u_reg { float u_reg[]; };
 layout(binding = 15, std430) buffer b_dbg {
   float dbg[16];
 }; // size for testing
 // layout(binding = 10, std430) buffer b6 {float gj[];}; //W,NW,NE
 
-layout(location = 20) uniform uvec2 size; // XY
+layout(location = 20) uniform ivec2 size; // XY
 layout(location = 21) uniform float dt_sim;
 layout(location = 22) uniform uint i;
+layout(location = 25) uniform uint i_frame_in_current_chunk; // iteration
 
 layout(location = 23) uniform bool mouse_pressed;
 layout(location = 24) uniform uvec2 mouse_coords;
@@ -39,6 +41,12 @@ float rand(vec2 co) { // bandymams, trink
   return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
+float normToVolt(float u_norm) {
+  const float Vfi = 15e-3;  // nernst potential of fast gate
+  const float V0 = -85e-3;
+  return (u_norm * (Vfi-V0) + V0) * 1.0e3;
+}
+
 void main() {
   //	u_[gl_GlobalInvocationID.y*size.x+gl_GlobalInvocationID.x] =
   //
@@ -52,22 +60,45 @@ void main() {
 
     // float u = u_[adr];
     float I_ext = 0;
-    int first = 1; // ms
-    // float delay = 70;
-    int second = 240; // ms
+    int first = 1; // t first impulse on, ms
+    
+    float pulse_width = 2; //ms
+    // float pulse1 = 60*4.f;// BPM // CV meas
+    float pulse1 = 120.f;// BPM
+    float pulse2 = 120.f;// BPM
+    float pulse3 = 180.f;// BPM
+    float pulse4 = 240.f;// BPM
+    float t_switch_to_pulse2 = 40000.f;// nuo kada pradeti pulse2, ms
+    float t_switch_to_pulse3 = 80000.f;// nuo kada pradeti pulse2, ms
+    float t_switch_to_pulse4 = 120000.f;// nuo kada pradeti pulse2, ms
+    
+    const float minute_ms = 60000.f; // kiek ms vienoje minuteje
+    
+    float pulse_period = minute_ms / pulse1; // ms
+    float t = i*dt_sim;
+    if ( t > t_switch_to_pulse2) // pulso daznio keitimas po tam tikro laiko, ms
+      pulse_period = minute_ms/pulse2; // ms
+    if ( t > t_switch_to_pulse3) // pulso daznio keitimas po tam tikro laiko, ms
+      pulse_period = minute_ms/pulse3; // ms
+    if ( t > t_switch_to_pulse4) // pulso daznio keitimas po tam tikro laiko, ms
+      pulse_period = minute_ms/pulse4; // ms
+
+    // int second = 250; // ms
     //			while (true) {
     //			}
     I_ext = //( (i*dt_sim > first && i*dt_sim < first+2)
             //||  (i*dt_sim > first+delay && i*dt_sim < first+delay + 1) ) &&
-        ((i >= first * 50 && i <= (first + 2) * 50) ||
-         (i % (second * 50)) >= 0 && (i % (second * 50) <= 2 * 50))
+        // ((i >= first * 1./dt && i <= (first + pulse_width) * 1./dt) || // kai naudojamas pulse1
+         (  i % int(pulse_period * 1./dt_sim) >= 0    &&   i % int(pulse_period * 1./dt_sim) <= int(pulse_width * 1./dt_sim) )
                 //   ||
                 //  (i >= second * 50 &&
                 //   i <= (second + 2) * 50)) // periodinis stim. 100it(2ms)
                 //   ilgio
                 //&& (y >= 64-5 && y <= 64+5 && x >= 64-4 &&
                 // x <= 64+4) //? .25f : 0;
-                && (pow(int(y) - 64, 2) + pow(int(x) - 32, 2) <= 5)
+                // && (pow(int(y) - 10-1, 2) + pow(int(x) - 4 + 5, 2) <= 5) // zad. apvali zona kaireje apacioje
+                // && (pow(int(y) - 32, 2) + pow(int(x) - (32-10), 2) <= 3*3) // zad. apvali zona
+                && (x == 0) // zad. plokscia banga
             ? .5f
             : 0;
 
@@ -94,37 +125,122 @@ void main() {
     int xL = int(x) - 1;
     int xR = int(x) + 1;
     int yD = int(y) - 1; // down
-    if (xL == -1)        // periodic boundary left
-      // xL = int(size.x)-1; // take x on right
-      xL = 0;                      // isjungiam
-    if (xR == int(size.x) - 1 + 1) // periodic boundary right
-                                   //				xR = 0;
-      xR = int(size.x) - 2;        // isjungiam
-    if (yD == -1)                  // periodic boundary right
-                                   // yD = int(size.y) - 1;
-      yD = 1;                      // isjungiam
 
-    JgjW = J_gj[y * size.x * 3 + x * 3];
-    JgjE = -J_gj[y * size.x * 3 + xR * 3]; // JgjE = -J_gj[y*size.x*3 +
-                                           // (x+1)*3];
-    JgjNW = J_gj[y * size.x * 3 + x * 3 + 1];
-    JgjNE = J_gj[y * size.x * 3 + x * 3 + 2];
+    // periodic boundaries checks
+    if (xL == -1)        // periodic boundary left
+      xL = int(size.x)-1; // take x on right
+      // xL = 0;                      // isjungiam
+    if (xR == int(size.x)) // periodic boundary right
+      				xR = 0; 
+          // int(size.x) - 1;        // isjungiam
+    if (yD == -1)              // periodic boundary right    
+      yD = int(size.y) - 1; 
+      // yD = 1;                      // isjungiam
+
+    // // tikrinam ar ne pasienes lasteles, jei taip sroviu i siena neskaiciuojam
+    // if (x > 0)
+    //   JgjW = J_gj[y * size.x * 3 + x * 3];
+    // if (x < int(size.x) - 1)
+    //   JgjE = -J_gj[y * size.x * 3 + xR * 3]; // JgjE = -J_gj[y*size.x*3 + (x+1)*3];
+    // if (x > 0   &&   y < int(size.y) - 1)
+    //   JgjNW = J_gj[y * size.x * 3 + x * 3 + 1];
+    // if (x < int(size.x) - 1   &&   y < int(size.y) - 1)
+    //   JgjNE = J_gj[y * size.x * 3 + x * 3 + 2];
+
+    // tikrinam ar ne pasienes lasteles, jei taip sroviu i siena neskaiciuojam    
+    // get W, NW, NE
+    // if (x > 0) //checkai jau yra compShader1
+      JgjW = J_gj[y * size.x * 3 + x * 3];
+    // if (x > 0   &&   y < int(size.y) - 1)
+      JgjNW = J_gj[y * size.x * 3 + x * 3 + 1];
+    // if (x < int(size.x) - 1   &&   y < int(size.y) - 1)
+      JgjNE = J_gj[y * size.x * 3 + x * 3 + 2];
+
+    // get E, SE, SW
+    JgjE = -J_gj[y * size.x * 3 + xR * 3]; // JgjE = -J_gj[y*size.x*3 + (x+1)*3];
     if (y % 2 == 0) {
-      JgjSW = -J_gj[yD * size.x * 3 + x * 3 +
-                    1]; // JgjSW = -J_gj[(y-1)*size.x*3 + x*3 + 1]; //NW
-      JgjSE =
-          -J_gj[yD * size.x * 3 + xL * 3 + 2]; // JgjSE = -J_gj[(y-1)*size.x*3 +
-                                               // (x-1)*3 + 2]; NE
+      JgjSE = -J_gj[yD * size.x * 3 + x * 3 + 1]; // JgjSE = -J_gj[(y-1)*size.x*3 + (x-1)*3 + 2]; NE
+      JgjSW = -J_gj[yD * size.x * 3 + xL * 3 + 2]; // JgjSW = -J_gj[(y-1)*size.x*3 + x*3 + 1]; //NW
     } else {                                   // when y % 2 != 0
-      JgjSW = -J_gj[yD * size.x * 3 + xR * 3 +
-                    1]; // JgjSW = -J_gj[(y-1)*size.x*3 + (x+1)*3 + 1];
-      JgjSE = -J_gj[yD * size.x * 3 + x * 3 +
-                    2]; // JgjSE = -J_gj[(y-1)*size.x*3 + x*3 + 2];
+      JgjSE = -J_gj[yD * size.x * 3 + xR * 3 + 1]; // JgjSE = -J_gj[(y-1)*size.x*3 + x*3 + 2];                    
+      JgjSW = -J_gj[yD * size.x * 3 + x * 3 + 2]; // JgjSW = -J_gj[(y-1)*size.x*3 + (x+1)*3 + 1];
+    }    
+
+    bool isPeriodicLR = false; //left-right
+    bool isPeriodicUD = true; //up-down
+    
+    if (!isPeriodicLR) {
+      if (x == 0 && !isPeriodicLR) 
+        JgjW = 0; 
+      if (x == size.x - 1 && !isPeriodicLR)
+        JgjE = 0;        
+      if ( (y == size.y - 1 && !isPeriodicUD) ||  (y % 2 == 0 && x == 0 && !isPeriodicLR) )
+        JgjNW = 0;        
+      if ( (y == size.y - 1 && !isPeriodicUD) ||  ( y % 2 != 0 && x == size.x - 1 && !isPeriodicLR) )     
+        JgjNE = 0;
+      if ( (y == 0 && !isPeriodicUD) ||  (y % 2 == 0 && x == 0 && !isPeriodicLR) )              
+        JgjSW = 0;
+      if ( (y == 0 && !isPeriodicUD) ||  (y % 2 != 0 && x == size.x - 1 && !isPeriodicLR) )      
+        JgjSE = 0;        
     }
+// // pries periodic ivedima
+//     // get E, SE, SW
+//     if (x < int(size.x) - 1) 
+//       JgjE = -J_gj[y * size.x * 3 + xR * 3]; // JgjE = -J_gj[y*size.x*3 + (x+1)*3];
+//     if ( y > 0) // <- bottom boundary condition: disconnected J_bottom_*= 0   or   commment this line to enable periodic BC
+//       if (y % 2 == 0) {
+//         JgjSE = -J_gj[yD * size.x * 3 + x * 3 + 1]; // JgjSE = -J_gj[(y-1)*size.x*3 + (x-1)*3 + 2]; NE
+//         if (x > 0)
+//           JgjSW = -J_gj[yD * size.x * 3 + (x-1) * 3 + 2]; // JgjSW = -J_gj[(y-1)*size.x*3 + x*3 + 1]; //NW
+//       } else {                                   // when y % 2 != 0
+//         JgjSW = -J_gj[yD * size.x * 3 + x * 3 + 2]; // JgjSW = -J_gj[(y-1)*size.x*3 + (x+1)*3 + 1];
+//         if (x < size.x - 1)
+//           JgjSE = -J_gj[yD * size.x * 3 + x * 3 + 1]; // JgjSE = -J_gj[(y-1)*size.x*3 + x*3 + 2];                
+//       }    
+
+    // if ( y > 0    )
+    // {
+    //   if (y % 2 == 0) {
+    //     JgjSW = -J_gj[yD * size.x * 3 + (x-1) * 3 + 2]; // JgjSW = -J_gj[(y-1)*size.x*3 + x*3 + 1]; //NW
+    //     JgjSE = -J_gj[yD * size.x * 3 + x * 3 + 1]; // JgjSE = -J_gj[(y-1)*size.x*3 + (x-1)*3 + 2]; NE
+    //   } else {                                   // when y % 2 != 0
+    //     JgjSW = -J_gj[yD * size.x * 3 + x * 3 + 2]; // JgjSW = -J_gj[(y-1)*size.x*3 + (x+1)*3 + 1];
+    //     JgjSE = -J_gj[yD * size.x * 3 + x * 3 + 1]; // JgjSE = -J_gj[(y-1)*size.x*3 + x*3 + 2];
+    //   }
+    // }
+    // if ( y > 0
+    //  && x > 0
+    // //  && x < size.x - 1 ) //kai down-up ne periodic
+    // )
+    // {
+    //   if (y % 2 == 0) {
+    //     if (y > 0)
+    //     JgjSW = -J_gj[yD * size.x * 3 + x * 3 + 1]; // JgjSW = -J_gj[(y-1)*size.x*3 + x*3 + 1]; //NW
+    //     JgjSE = -J_gj[yD * size.x * 3 + xL * 3 + 2]; // JgjSE = -J_gj[(y-1)*size.x*3 + (x-1)*3 + 2]; NE
+    //   } else {                                   // when y % 2 != 0
+    //     JgjSW = -J_gj[yD * size.x * 3 + xR * 3 + 1]; // JgjSW = -J_gj[(y-1)*size.x*3 + (x+1)*3 + 1];
+    //     JgjSE = -J_gj[yD * size.x * 3 + x * 3 + 2]; // JgjSE = -J_gj[(y-1)*size.x*3 + x*3 + 2];
+    //   }
+    // }
 
     // dbg[y*size.x*2 + x*2] = JgjW;
-    float J = J_ion[adr] + JgjW + JgjE + JgjNW + JgjNE + JgjSE + JgjSW;
+    
+    // pridedam nesuzadinamu last.
+    //bool isExcitable = rand(vec2(0.123, x * y)) < 0.95f;
+    // float J = (isExcitable ? J_ion[adr] : 0.0f) + JgjW + JgjE + JgjNW + JgjNE + JgjSE + JgjSW;
+    
+    float J =  J_ion[adr] + JgjW + JgjE + JgjNW + JgjNE + JgjSE + JgjSW;
+    // float J = JgjW + JgjE + JgjNW + JgjNE + JgjSE + JgjSW;
+    // u_[adr] = 1e-10*dt_sim * (I_ext + J); //#/(Cm*Area); // WORKS
     u_[adr] += dt_sim * (I_ext + J); //#/(Cm*Area); // WORKS
+
+  //TODO: cia daro kiekviena i, bet galima tik as i_frame
+    u_reg[i_frame_in_current_chunk*size.x*size.y + y*size.x + x] = normToVolt(u_[adr]);
+
+        // u_[adr] = x == 31 ? 1 : 0;
+    // int d = 4;
+    // u_[adr] = x > 32 - d && x < 32 + d && y > 32 - d && y < 32 + d ? 0.5 : 0; //#/(Cm*Area); // WORKS
+    // u_[adr] = (pow(int(y) - 33-1, 2) + pow(int(x) - 33-1, 2) < 10*10) ? 0.5 : 0; //#/(Cm*Area); // WORKS
 
     // u_[adr] = rand(vec2(i, x * y)); // testams;
 

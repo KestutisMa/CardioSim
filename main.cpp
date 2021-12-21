@@ -1,9 +1,34 @@
-﻿#include <memory>
+﻿#include <filesystem> // to delete previous zarr files
+
+#include "nlohmann/json.hpp"
+#include "xtensor/xarray.hpp"
+
+// #include "xtensor-zarr/xzarr_hierarchy.hpp"
+// #include "xtensor-zarr/xzarr_file_system_store.hpp"
+
+// #include <xtensor/xarray.hpp>
+// #include <xtensor/xio.hpp>
+// #include <xtensor/xview.hpp>
+
+// factory functions to create files, groups and datasets
+#include "z5/factory.hxx"
+// handles for z5 filesystem objects
+#include "z5/filesystem/handle.hxx"
+// io for xtensor multi-arrays
+#include "z5/multiarray/xtensor_access.hxx"
+// attribute functionality
+#include "z5/attributes.hxx"
+
+#include <memory>
 #include <string>
+#include <random>
+#include <iterator>
 
 #include <grpcpp/grpcpp.h>
 #include <google/protobuf/empty.pb.h>
 #include "fentonControl.grpc.pb.h"
+
+#include "npy.hpp"
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -36,6 +61,7 @@ GLFWwindow *window;
 // using namespace glm;
 
 #include "shader.hpp"
+// using namespace std;
 
 void mouse_button_callback(GLFWwindow *window, int button, int action, int mods);
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods);
@@ -65,36 +91,52 @@ clock_t t_start, t_end;
 using namespace std;
 
 queue<int> queueCmd;
-queue<float *> queueReply;
+queue<float *> queueReply; // kai float
+// queue<double *> queueReply; // kai double
 
-const unsigned int sizeX = 64 + 1; //*3
-const unsigned int sizeY = 64 + 1;
-const int workGroupSize = 32; //32
-const int itersInFrame = 20;
+const size_t sizeX = 90; // lasteliu turi buti lyginis skaicius, kad veiktu periodic boudaries
+const size_t sizeY = 2;
+const size_t workGroupSizeX = 32; //32
+const size_t workGroupSizeY = 32; //32
+const size_t itersInFrame = 10;
+// **** Simulacijos trukme
+const float t_max = 160000.f; //ms
+const size_t frame_chunk_size = 100; // kiek i_frame itaraciju vienam chunk
 // Open a window and create its OpenGL context
 int scale = 600;
 int width = scale * sizeX / sizeY; //*2 kai 2 2d grafikai
 int height = scale;
+//uniform parameters
+struct Par {
+	float  dt = 0.02; //ms //kai float
+} par;
 
-// size for ssb and vertex draw
-const int i_frame_max = 100000;
+
+
 //Shader storege buffer. For compute shader
 float *ssb_u_host = new float[sizeX * sizeY];
 float *ssb_v_host = new float[sizeX * sizeY];
 float *ssb_w_host = new float[sizeX * sizeY];
 float *ssb_J_ion_host = new float[sizeX * sizeY];
-float *ssb_J_gj_host = new float[sizeX * sizeY * 3]; // *3: W,NW,NE
-float *ssb_u_reg_host = new float[i_frame_max];
 float *ssb_gj_host = new float[sizeX * sizeY * 3]; // *3: W,NW,NE
-float *ssb_gj_reg_host = new float[i_frame_max * 2];
 float *ssb_gj_par_host = new float[sizeX * sizeY * 3 * 7 * 2]; // *3: W,NW,NE; *7: parameters count; *2:gates count
 float *ssb_gj_p_host = new float[sizeX * sizeY * 3 * 4];	   // markov state matices for each gj
-float *ssb_dbg_host = new float[i_frame_max * 3];
+float *ssb_J_gj_host = new float[sizeX * sizeY * 3]; // *3: W,NW,NE
+// reg:
+float *ssb_u_reg_host = new float[frame_chunk_size*sizeX * sizeY]; // kolkas neisvedama?
+float *ssb_gj_reg_host = new float[frame_chunk_size * sizeX * sizeY * 3];
+const int dbg_size = 10;
+float *ssb_dbg_host = new float[frame_chunk_size * dbg_size]; // 10 laisvu vietu
 
 GLuint ssbo_u, ssbo_v, ssbo_w, ssbo_J_ion, ssbo_J_gj, ssbo_u_reg, ssbo_gj, ssbo_gj_reg, ssbo_gj_par, ssbo_gj_p, ssbo_dbg;
 
+std::mt19937 rng;
+
 int main(void)
 {
+	rng.seed(123); // for initializing heterotypic GJs distribution in tissue
+	std::uniform_int_distribution<uint32_t> uint_dist100(0,100);
+
 	cout << "Starting..\n";
 
 	HWND consoleWindow = GetConsoleWindow();
@@ -170,10 +212,10 @@ int main(void)
 
 	// Create and compile our GLSL program from the shaders
 	//ShProgs shIDs = LoadShaders("SimpleVertexShader.vert", "SimpleFragmentShader.frag", "compShader1.comp", "compShader2.comp");
-	GLuint kernel1 = LoadComputeShader("compShader1.comp", workGroupSize);
-	GLuint kernel2 = LoadComputeShader("compShader2.comp", workGroupSize);
-	GLuint vertFragShadersID = LoadVertexFragmentShaders("SimpleVertexShader.vert", "SimpleFragmentShader.frag");
-	GLuint line2DvertFragShadersID = LoadVertexFragmentShaders("linePlot.vert", "linePlot.frag");
+	GLuint kernel1 = LoadComputeShader("C:\\OpenGL\\fentonGjOpenGL\\compShader1.comp", workGroupSizeX, workGroupSizeY);
+	GLuint kernel2 = LoadComputeShader("C:/OpenGL/fentonGjOpenGL/compShader2.comp", workGroupSizeX, workGroupSizeY);
+	GLuint vertFragShadersID = LoadVertexFragmentShaders("C:/OpenGL/fentonGjOpenGL/SimpleVertexShader.vert", "C:/OpenGL/fentonGjOpenGL/SimpleFragmentShader.frag");
+	GLuint line2DvertFragShadersID = LoadVertexFragmentShaders("C:/OpenGL/fentonGjOpenGL/linePlot.vert", "C:/OpenGL/fentonGjOpenGL/linePlot.frag");
 
 	for (int x = 0; x < sizeX; x++)
 		for (int y = 0; y < sizeY; y++)
@@ -200,84 +242,210 @@ int main(void)
 			// float A = 4.f;																//anisotropy
 			// float pars[6] = {0.1522, 0.0320, 0.2150, -34.2400, gmax, gmax / 10.f};		// lambda, alfa, beta, V0, Go, Gc
 
-			float A = 3.f; //anisotropy
-			float gmax = 3.e-8f;
-			//cx43d
-			// float pars[6] = {0.1522, 0.0320, 0.2150, -34.2400, gmax, gmax / 10.f};		// lambda, alfa, beta, V0, Go, Gc
-			// float par[14] = {															//init, paskui keisim anis.
-			// 				 pars[0], pars[1], pars[2], pars[3], -1, pars[4], pars[5],	//  % left side // lambda, alfa, beta, V0, Pol, Go, Gc
-			// 				 pars[0], pars[1], pars[2], pars[3], -1, pars[4], pars[5]}; // % right side
+			// float g_both = 50e-9f;
+			// float g_both = 50e-9f;
+			// float g_both = 8e-9f;
+			float A = 2.f; //anisotropy
+			
+			float gmax43 = 300e-9f; //600 300
+			float gmax4543 = 36e-9f;//64 46
+			// float gmax43 = 300e-9f; // susidaro prie 75-120-240 pulso
+			// float gmax4543 = 45e-9f;
+			//cx43
+			float pars43[6] = {0.1522, 0.0320, 0.2150, -34.2400, gmax43, gmax43 / 10.f};			  // lambda, alfa, beta, V0, Go, Gc
+			float par43[14] = {																		  //init, paskui keisim anis.
+							   pars43[0], pars43[1], pars43[2], pars43[3], -1, pars43[4], pars43[5],  //  % left side // lambda, alfa, beta, V0, Pol, Go, Gc
+							   pars43[0], pars43[1], pars43[2], pars43[3], -1, pars43[4], pars43[5]}; // % right side
 
-			// Cx43/45 hetero
+//  % Vj gating parameters of Cx43EGFP/Cx45 gap junction
+// %        lamda     A_alfa    A_beta     V_0     P_g      G_o             G_c
+// par =  [ 0.0656    0.0346    0.1922  -30.6046   -1   2.396*2*gmax  2.396*2*0.0773*gmax;    % Cx43 side
+//          0.1005    0.0390    0.0694  -14.4894   -1     2*gmax            2*0.0157*gmax];   % Cx45 side   
+// limit = 4.5508;     % threshold transition rate 
+
+			// Cx43/45 hetero, mindaugo 2021-06-28
 			// double gmax = 1.0e-9;                                                                        //.e-9;
-			double par[14] = {0.0001, 0.0239, 0.0912, -19.0232, -1, 4 * 2 * gmax, 4 * 2 * 0.0773 * gmax, // left side
-							  0.1115, 0.0179, 0.1051, -1.6781, -1, 2 * gmax, 2 * 0.0112 * gmax};		 // right side
+			// gmax4543 *= 1e-11;
 
-			for (int i = 0; i < 3; i++)
-			{ //W,NW,NE counter
+			// // seni
+			// float gmax4543 = g_both*0.4;
+			// double par4543[14] = {0.0656, 0.0346, 0.1922, 30.6046, 1,  2.396 * 2 * gmax4543,  2.396 * 2 * 0.0773 * gmax4543, // left side
+			// 					  0.1005, 0.0390, 0.0694, 14.4894, 1, 2 * gmax4543, 2 * 0.0157 * gmax4543};		 // right side
+
+			// MS 2021-09-15
+			// float gmax4543 = 1.0f;
+			// float gmax4543 = g_both*3.15;
+			// double par4543[14] = {0.0462, 0.0264 , 0.1525, -7.8248, -1,  gmax4543,  0.0033 * gmax4543, // left side
+			// 					  0.0567, 0.0159, 0.3085, -15.0997, -1, gmax4543 * 0.158, 0.0004 * gmax4543 * 0.158};		 // right side, 0.158 pagal 45 : 43 open busenu laidumu santyki
+			
+// {"lambda1":0.7083354891481388,"A_alpha1":0.35398071557426974,"A_beta1":0.1446391702724877,"V01":-75.12289637286416,"polarity1":-1,"Go1":1,"Gc1":0.024245815743767676,
+// "lambda2":0.04123104898401486,"A_alpha2":0.03370471203601321,"A_beta2":0.133229953423052,"V02":-15.266576202701913,"polarity2":-1,"Go2":0.158,"Gc2":0.010556548377678457,"limit":2.1815270775900486}
+			// // Cx43/45 hetero, KM 2021-10-06 'par + card(25proc)+70_hyst+-80_step -V0 v2.json'
+			// // float gmax4543 = 1.0f;
+			// float gmax4543 = g_both*0.5*1.47*3.72*0.6;
+			// double par4543[14] = {0.7083354891481388, 0.35398071557426974 , 0.1446391702724877, -75.12289637286416, -1,  gmax4543,  gmax4543*0.024245815743767676, // left side
+			// 					  0.04123104898401486, 0.03370471203601321, 0.133229953423052, -15.266576202701913, -1, gmax4543*0.158, gmax4543 * 0.010556548377678457};	
+
+			// MS 2021-11-04
+			// float gmax4543 = g_both*0.8;
+
+			double par4543[14] = {0.0257, 0.0218, 0.0899, -37.5, -1, gmax4543*0.8876, gmax4543*0.07,
+				   0.0525, 0.039, 0.0993, -5.22, -1,  gmax4543*0.816,  gmax4543*0.0125};	
+			double limit = 4.83; // <--- TODO: kolkas limit reikia rankiniu budu ivesti i compShader1
+			// // KM 2021-10-29
+			// float gmax4543 = g_both*0.5;
+			// double par4543[14] = {0.0257, 0.0218, 0.0899, -37.5, -1, gmax4543*0.8876, gmax4543*0.07,
+			// 	   0.0525, 0.039, 0.0993, -5.22, -1,  gmax4543*0.816,  gmax4543*0.0125};	
+			// double limit = 4.83; // <--- TODO: kolkas limit reikia rankiniu budu ivesti i compShader1
+			// // MS 2021-10-16
+			// float par_mind[13] = {0.0943, 0.1054, 0.0416, -1.7565, 0.0377, 0.0403, 0.0336, 0.2035, -18.3999, 0.0262, 31.4403, 98.1429, 0.1135};
+			// float gmax4543 = g_both*0.015;
+			// double par4543[14] = {par_mind[5], par_mind[6], par_mind[7], par_mind[8], -1, gmax4543*par_mind[11], gmax4543*par_mind[11]*par_mind[9],
+			// 	   par_mind[0], par_mind[1], par_mind[2], par_mind[3], -1,  gmax4543*par_mind[10],  gmax4543*par_mind[10]*par_mind[4]};	
+			// double limit = par_mind[12]; // <--- TODO: kolkas limit reikia rankiniu budu ivesti i compShader1
+			
+			// // Cx43/45 hetero bkp
+			// // double gmax = 1.0e-9;                                                                        //.e-9;
+			// float gmax4543 = g_both*0.6;
+			// // gmax4543 *= 1e-11;
+			// double par4543[14] = {0.0001, 0.0239, 0.0912, -19.0232, -1, 4 * 2 * gmax4543, 4 * 2 * 0.0773 * gmax4543, // left side
+			// 					  0.1115, 0.0179, 0.1051, -1.6781, -1, 2 * gmax4543, 2 * 0.0112 * gmax4543};		 // right side
+
+			// nustatom PJ param(g dar bus keiciamas)
+			for (int i = 0; i < 3; i++) //W,NW,NE counter
+			{
 				for (int ii = 0; ii < 4; ii++)
 					ssb_gj_p_host[y * sizeX * 3 * 4 + x * 3 * 4 + i * 4 + ii] = 0.f;
-				//sm4sm nereikia: ssb_gj_p_host[y * sizeX * 3 * 4 + x * 3 * 4 + i * 4 + 0] = 1.f; // initial - all open
-				for (int ii = 0; ii < 7 * 2; ii++) //copy all parameters of all gates
-				{
-					ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par[ii]; // visi par
-																									   // if (i == 0 && ii >= 4 * 2 && ii < 4 * 4) { // W
-																									   // 	ssb_gj_par_host[y * sizeX * 3 * 7 * 4 + x * 3 * 7 * 4 + i * 7 * 4 + ii] *= anis; // set anis
-																									   // }
-				}
+				for (int ii = 0; ii < 7 * 2; ii++)														 //copy all parameters of all gates
+					ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par43[ii]; // visi par
 			}
-			int sel = 0;																	// select W
-			ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 5] *= A;	//Go1 set anis
-			ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 6] *= A;	//Gc1 set anis
-			ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 12] *= A; //Go2 set anis
-			ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 13] *= A; //Gc2 set anis
 
-			// for (int sel = 0; sel < 3; sel++)
-			// { //kliutis
+			// pradzioj laikom kad visos PJ nelaidzios
+			for (int sel = 0; sel < 3; sel++)
+			{
+				float gjOpen = 1.e-30f;
+				float gjClosed = 1.e-30f;
+				ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 5] = gjOpen;	  //Go1 set anis
+				ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 6] = gjClosed;  //Gc1 set anis
+				ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 12] = gjOpen;	  //Go2 set anis
+				ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 13] = gjClosed; //Gc2 set anis
+			}
 
-			// 	// int r = 4;
+			// pridedam laidzia zona
+			// if (x < y && (-x + sizeY) > y  ||  x < y && (-x + sizeY) > y) // zonos matmenys
+			// triangles lines & middle channel box
+			// float k = 1.f;
+			float k = 1.f;
+			int middleBoxHeight = 6;////sizeY / 2;
+			int topY = sizeY / 2 + middleBoxHeight/2;
+			int bottomY = sizeY / 2 - middleBoxHeight/2;
+			// if ( // trikampe zona
+			// 	x * k < y					// right bottom
+			// 		&& (-x * k + sizeY) > y // right top
+			// 	// ||
+			// 	// (-x + sizeY) * k < y			   // left bottom
+			// 	// 	&& (x - sizeX) * k + sizeY > y // left top
+			// 	||
+			// 	y < topY && y > bottomY // middle channel box
+			// )
+			{
+				float storis = 4.f;
+				for (int i = 0; i < 3; i++)									//W,NW,NE counter
+				{
+					// const float cx_change_rate = 0.9;
+					// bool is4345 = uint_dist100(rng) <= 60 * ( (float)x/sizeX*cx_change_rate );
+					bool isNonCond = uint_dist100(rng) >= 90; // cx43 ar cx4345 heterotyp. tikymybe
+					bool is4345 = uint_dist100(rng) >= 50; // cx43 ar cx4345 heterotyp. tikymybe
+					bool orientation = uint_dist100(rng) >= 50; // orientacija erdveje issibarsciusi vienodomis tikimybemis
+					for (int ii = 0; ii < 7 * 2; ii++)						//copy all parameters of all gates
+					{
+						// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+						// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f && uint_dist10(rng) > 7) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+						// if (x > 32 - storis / 2.f && is4345) // su random distribution
+						
+						// if (x >= sizeX-1) { // add non conductive line
 
-			// 	// if (pow(x - 128, 2) + pow(y - 64, 2) <= pow(r + 1, 2))
-			// 	// {																					   //sumazinto laidumo zona //				// if (!(x == 128 && y == 64 - 16 - 1)) //for debug: disable all gj except 1 cell
-			// 	// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 5] *= 0.3f;  //Go1 set
-			// 	// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 6] *= 0.3f;  //Gc1 set
-			// 	// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 12] *= 0.3f; //Go2 set
-			// 	// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 13] *= 0.3f; //Gc2 set
-			// 	// }
+						// }
+						// else
 
-			// 	if (
-			// 		//pow(x - 128, 2) + pow(y - 64, 2) <= pow(r - 1, 2) // nulinio laidumo zona //nesuzadinamoj zonoj atjungiam vidurines last
-			// 		// ( ( x >= 0 && x < 128) && (y >= 0 && y < 64) && abs((x-128)*0.02-(y-32)) < 1 )// vortex shedding bandymai
-			// 		// vert.
-			// 		(abs(x - 128 + 64) < 4 /*&& (y > 64-16 && y < 64+16)*/) // 1 sink-source mismatch bandymai
-			// 		|| (abs(x - 128) < 16 && abs(y - 64) > 4)				// 2,3 sink-source mismatch bandymai
-			// 		// || (abs(x - 128 - 64) < 2)								// 4 sink-source mismatch bandymai
-			// 		// 	// || ( abs(x-128) < 4 && (y > 0 && y < 32 || y > 32+2 && y <= 64+60) ) //spyglys y: kord+r+spyglioIlgis
-			// 		//horiz.
-			// 		|| (abs(y - 64) - 8 == 8 && x < 128) // 1,2 sink-source mismatch bandymai
-			// 											 // || (abs(y - 64) - 8 == 0 && x < 128) // 3,4 sink-source mismatch bandymai
-			// 	)
-			// 	{
-			// 		float gjOpen = gmax * 0.003f; //1e-18f;
-			// 		float gjClosed = gjOpen / 10.f;
-			// 		ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 5] = gjOpen;	  //Go1 set anis
-			// 		ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 6] = gjClosed;  //Gc1 set anis
-			// 		ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 12] = gjOpen;	  //Go2 set anis
-			// 		ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 13] = gjClosed; //Gc2 set anis
-			// 	}
-			// }
+						// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+						// if (x > 30 ) //heterotypic box, Cx43-45 zona		
+						if (x > 10 && (x % 20 > 0) && (x % 20 <= 2) ) //kas 20 po 2 last, Cx43-45 zona		
+						// if (x > 10 && (x % 20 > 0) && (x % 20 <= 10) ) //cv bandymai, Cx43-45 zona		
+						// if (is4345) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+							ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];
+						// if (i == 2) //NE,
+						// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];;
+						// }
+						else // Cx43 zona
+						   {
+							// if (isNonCond && ( x >= 15 && (x % 10 == 3) ) ) { // cx43 zonoje pridedam kliuciu, kad sumazinti sroves nusiurbima
+								// if (ii == 5 || ii == 6 || ii == 12 || ii == 13) //go1,2 gc1,2 = labai mazas
+									// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = 1.e-30f;  
+							// }
+							// else
+								ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par43[ii];
+						   }
+
+
+						// // tiesiog visa zona cx4345
+						// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];
+						// // // tiesiog visa zona cx43
+						// // ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par43[ii];
+					}
+
+					// if (isNonCond) {
+					// 	float gjOpen = 1.e-30f;
+					// 	float gjClosed = 1.e-30f;
+					// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 5] = gjOpen;	  //Go1 set anis
+					// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 6] = gjClosed;  //Gc1 set anis
+					// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 12] = gjOpen;	  //Go2 set anis
+					// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 13] = gjClosed; //Gc2 set anis
+					// }
+
+					// NW junciu apsukimas, kad tolygiai einu left->right cx43->cx45, (zr. uzrasus "zadinimo eiliskumas") 
+					if (i == 1) { // NW
+						ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 3] *= -1.f; // V01
+						ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 4] *= -1.f; // Pol1
+						ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 10] *= -1.f; // V02
+						ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 11] *= -1.f; // Pol2
+					}
+
+					// if (orientation) {  // orientacijos erdveje issibarstymas
+					// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 3] *= -1.f; // V01
+					// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 4] *= -1.f; // Pol1
+					// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 10] *= -1.f; // V02
+					// 	ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + 11] *= -1.f; // Pol2
+					// }
+				}
+					// printf("%d ", rand());
+				int sel = 0;																	// select W
+				ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 5] *= A;	//Go1 set anis
+				ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 6] *= A;	//Gc1 set anis
+				ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 12] *= A; //Go2 set anis
+				ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + sel * 7 * 2 + 13] *= A; //Gc2 set anis
+			}
 
 			//for (int i = 0; i < 1; i++)
 			//ssb_dbg_host[y * sizeX * 1 + x * 1 + i] = 0;
 		}
-	for (int i = 0; i < i_frame_max; i++)
+	for (int i = 0; i < frame_chunk_size; i++)
 	{
-		ssb_u_reg_host[i] = 0.f; //sin(float(i) / 100);
-		ssb_gj_reg_host[0 * i_frame_max + i] = 0.f;
-		ssb_gj_reg_host[1 * i_frame_max + i] = 0.f;
-		ssb_dbg_host[i * 3 + 0] = 0.f;
-		ssb_dbg_host[i * 3 + 1] = 0.f;
-		ssb_dbg_host[i * 3 + 2] = 0.f;
+		for (int y=0; y < sizeY; y++)
+			for (int x=0; x < sizeX; x++) {
+				ssb_u_reg_host[i*sizeX*sizeY + y*sizeX + x] = y*(i+1);//.f; //sin(float(i) / 100);
+				ssb_gj_reg_host[i*sizeX*sizeY*3 + y*sizeX*3 + x*3 + 0] = 0;//i+1;
+				ssb_gj_reg_host[i*sizeX*sizeY*3 + y*sizeX*3 + x*3 + 1] = 0;//2*(i+1);
+				ssb_gj_reg_host[i*sizeX*sizeY*3 + y*sizeX*3 + x*3 + 2] = 0;//3*(i+1);
+			}
+		// ssb_dbg_host[i * dbg_size + 0] = 0.f;
+		// ssb_dbg_host[i * dbg_size + 1] = 0.f;
+		// ssb_dbg_host[i * dbg_size + 2] = 0.f;
+		// ssb_dbg_host[i * dbg_size + 3] = 0.f;
+		// ssb_dbg_host[i * dbg_size + 4] = 0.f;
+		// ssb_dbg_host[i * dbg_size + 5] = 0.f;
+		// ssb_dbg_host[i * dbg_size + 6] = 0.f;
+		// ssb_dbg_host[i * dbg_size + 7] = 0.f;
 	}
 	// GLuint ssbo_u, ssbo_v, ssbo_w, ssbo_J_ion, ssbo_J_gj, ssbo_u_reg, ssbo_gj, ssbo_gj_reg, ssbo_gj_par, ssbo_gj_p, ssbo_dbg;
 	glGenBuffers(1, &ssbo_u);
@@ -293,70 +461,69 @@ int main(void)
 	glGenBuffers(1, &ssbo_dbg);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeX * sizeY * sizeof(float), ssb_u_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeX * sizeY * sizeof(ssb_u_host[0]), ssb_u_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, ssbo_u);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_v);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeX * sizeY * sizeof(float), ssb_v_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeX * sizeY * sizeof(ssb_v_host[0]), ssb_v_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, ssbo_v);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_w);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeX * sizeY * sizeof(float), ssb_w_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeX * sizeY * sizeof(ssb_w_host[0]), ssb_w_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, ssbo_w);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_J_ion);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeX * sizeY * sizeof(float), ssb_J_ion_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, sizeX * sizeY * sizeof(ssb_J_ion_host[0]), ssb_J_ion_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, ssbo_J_ion);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_J_gj);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * sizeX * sizeY * sizeof(float), ssb_J_gj_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * sizeX * sizeY * sizeof(ssb_J_gj_host[0]), ssb_J_gj_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, ssbo_J_gj);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u_reg);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, i_frame_max * sizeof(float), ssb_u_reg_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, frame_chunk_size * sizeX*sizeY * sizeof(ssb_u_reg_host[0]), ssb_u_reg_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, ssbo_u_reg);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * sizeX * sizeY * sizeof(float), ssb_gj_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * sizeX * sizeY * sizeof(ssb_gj_host[0]), ssb_gj_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, ssbo_gj);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_reg);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, 2 * i_frame_max * sizeof(float), ssb_gj_reg_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * frame_chunk_size * sizeX*sizeY * sizeof(ssb_gj_reg_host[0]), ssb_gj_reg_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, ssbo_gj_reg);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_par);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(float), ssb_gj_par_host, GL_DYNAMIC_COPY);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(ssb_gj_par_host[0]), ssb_gj_par_host, GL_DYNAMIC_COPY);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 12, ssbo_gj_par);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_p);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 4 * sizeX * sizeY * sizeof(float), ssb_gj_p_host, GL_DYNAMIC_COPY);
+	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 4 * sizeX * sizeY * sizeof(ssb_gj_p_host[0]), ssb_gj_p_host, GL_DYNAMIC_COPY);
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 13, ssbo_gj_p);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_dbg);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * i_frame_max * sizeof(float), ssb_dbg_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, frame_chunk_size * sizeof(ssb_dbg_host[0]), ssb_dbg_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 15, ssbo_dbg);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0); //unbind
 
-	//uniform parameters
-	struct Par
-	{
-		float dt = 0.02; //ms
-	} par;
+
 	glUseProgram(kernel1); //glUseProgram(shIDs.compID1);
 	//GLint location = glGetUniformLocation(shIDs.compID1, "sizeXY"); printf("location %d \n", location);	if (location == -1) { printf("Could not locate uniform location in CS. "); }
-	glUniform2ui(20, sizeX, sizeY);
+	glUniform2i(20, sizeX, sizeY);
 	//location = glGetUniformLocation(shIDs.compID1, "dt_sim"); printf("location %d \n", location);	if (location == -1) { printf("Could not locate uniform location in CS. "); }
-	glUniform1f(21, par.dt);
-	const GLint location = glGetUniformLocation(kernel1, "gjModelEnabled");
-	glUniform1ui(location, enableGjModel);
+	glUniform1f(21, par.dt); // kai float
+	// glUniform1d(21, par.dt); // kai double
+	GLint location = glGetUniformLocation(kernel1, "gjModelEnabled"); //galima ir su location
+	glUniform1i(location, enableGjModel);
 	glUseProgram(kernel2); //glUseProgram(shIDs.compID2);
-	glUniform2ui(20, sizeX, sizeY);
-	glUniform1f(21, par.dt);
+	glUniform2i(20, sizeX, sizeY);
+	// glUniform1d(21, par.dt); //kai double
+	glUniform1f(21, par.dt); //kai float
 	glUseProgram(vertFragShadersID); //glUseProgram(shIDs.frVeID);
-	glUniform2ui(20, sizeX, sizeY);
+	glUniform2i(20, sizeX, sizeY);
 	glUseProgram(line2DvertFragShadersID); //glUseProgram(shIDs.frVeID);
-	glUniform2ui(20, sizeX, sizeY);
+	glUniform2i(20, sizeX, sizeY);
+	glUniform1ui(glGetUniformLocation(line2DvertFragShadersID, "frame_chunk_size"), frame_chunk_size);
 
 	float *vertices = new float[sizeX * sizeY * 4]; //*4 because xy screen, and xy cell nr.
 	unsigned int *conn1 = new unsigned int[(sizeX - 1) * (sizeY - 1) * 3];
@@ -484,7 +651,7 @@ int main(void)
 	);
 
 	glBindVertexArray(0);
-
+	
 	//***
 	//some info print
 	//int work_grp_cnt[3];
@@ -515,30 +682,65 @@ int main(void)
 	//glLoadIdentity();
 	//glDrawElements(GL_TRIANGLES, (sizeX - 1) * (sizeY - 1) * 2 * 3, GL_UNSIGNED_INT, 0);
 
-	int i = 0;
-	int i_frame = 0;
+	// Zarr
+	std::filesystem::remove_all("data1.zr");
+	z5::filesystem::handle::File f("data1.zr", z5::FileMode::modes::w);
+
+	// create the file in zarr format
+	const bool createAsZarr = true;
+	z5::createFile(f, createAsZarr);
+
+	// create a new zarr dataset
+	const size_t i_frame_max = t_max * 1. / par.dt / itersInFrame; //6000e3; // dt*iter_in_frame= 0.02*10=0.2 ms per frame
+
+	const std::string dsName = "u";
+	std::vector<size_t> shape = {i_frame_max, sizeY, sizeX};
+	std::vector<size_t> chunks = {i_frame_max / 100 + 1, sizeY, sizeX};
+	auto u_ds = z5::createDataset(f, dsName, "float32", shape, chunks);
+
+	const std::string dsName1 = "gj";
+	std::vector<size_t> shape1 = {i_frame_max, sizeY, sizeX, 3};
+	std::vector<size_t> chunks1 = {i_frame_max / 100 + 1, sizeY, sizeX, 3};
+	auto gj_ds = z5::createDataset(f, dsName1, "float32", shape1, chunks1);
+
+	// get handle for the dataset
+	const auto dsHandle = z5::filesystem::handle::Dataset(f, dsName);
+
+	// read and write json attributes
+	nlohmann::json attributesIn;
+	// attributesIn["bar"] = "foo";
+
+	uint32_t i = 0;
+	uint32_t i_frame = 0;
+	auto current_frame_chunk = 0;
 	t_start = clock();
-	do
+	do // main Loop
 	{
 		if (!pause)
 		{
 			mtx.lock();
-			glfwMakeContextCurrent(window);
+			glfwMakeContextCurrent(window);			
 			glClear(GL_COLOR_BUFFER_BIT);
 			//Sleep(50);
-			printf("\rframe %d, iter %d, simul %.2f ms", i_frame, i, i * .02f);
-			for (int a = 0; a < itersInFrame; a++)
+			// printf("\rframe %d, iter %d, simul %.2f ms", i_frame, i, i * .02f);
+			auto i_frame_in_current_chunk = i_frame % frame_chunk_size;
+			printf("\riter %d, iter_in_chunk %d, simul %.2f ms", i, i_frame_in_current_chunk, i * .02f);
+			for (int a = 0; a < itersInFrame; a++) //i loop
 			{ // launch compute shaders!
 				// glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				glUseProgram(kernel1); //glUseProgram(shIDs.compID1);
 				glUniform1ui(22, i);   //butina, mc36ss, ---nebutina, debug
+				glUniform1ui(25, i_frame_in_current_chunk); // i_frame_in_current_chunk reikia gj_reg isvedimui
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
-				glDispatchCompute((GLuint)(sizeX + workGroupSize - 1) / workGroupSize, (GLuint)(sizeY + workGroupSize - 1) / workGroupSize, 1); // + workGroupSize - 1) tam kad butu "divide round up"
+				// glDispatchCompute((GLuint)(sizeX + workGroupSize) / workGroupSize, (GLuint)(sizeY + workGroupSize) / workGroupSize, 1); // + workGroupSize - 1) tam kad butu "divide round up"
+				glDispatchCompute((GLuint)(sizeX + workGroupSizeX -1) / workGroupSizeX, (GLuint)(sizeY + workGroupSizeY -1) / workGroupSizeY, 1); // SVARBU, bug fixed : .. - 1 nereikia, nes tada uzsiriecia prie periodic boundaries
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				glUseProgram(kernel2); //glUseProgram(shIDs.compID2);
 				glUniform1ui(22, i);
-				// glMemoryBarrier(GL_ALL_BARRIER_BITS);
-				glDispatchCompute((GLuint)(sizeX + workGroupSize - 1) / workGroupSize, (GLuint)(sizeY + workGroupSize - 1) / workGroupSize, 1);
+				glUniform1ui(25, i_frame_in_current_chunk);// reikia u_reg isvedimui
+				glMemoryBarrier(GL_ALL_BARRIER_BITS);
+				// glDispatchCompute((GLuint)(sizeX + workGroupSize) / workGroupSize, (GLuint)(sizeY + workGroupSize) / workGroupSize, 1);
+				glDispatchCompute((GLuint)(sizeX + workGroupSizeX-1 ) / workGroupSizeX, (GLuint)(sizeY + workGroupSizeY -1) / workGroupSizeY, 1);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 
 				i++;
@@ -568,7 +770,7 @@ int main(void)
 			}
 			glUseProgram(vertFragShadersID); //;glUseProgram(shIDs.frVeID);
 			//glPointSize(5.f);
-			//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); //wireframe mode
+			// glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); //wireframe mode
 			glBindVertexArray(VAO);
 			glUniform1ui(26, 1); //whatToPlot: 1 u, 2 vj, 3 gj
 			glDrawElements(GL_TRIANGLES, (sizeX - 1) * (sizeY - 1) * 2 * 3, GL_UNSIGNED_INT, 0);
@@ -577,8 +779,9 @@ int main(void)
 			glUniform1ui(26, 3); //whatToPlot: 1 u, 2 vj, 3 gj
 			glDrawElements(GL_TRIANGLES, (sizeX - 1) * (sizeY - 1) * 2 * 3, GL_UNSIGNED_INT, 0);
 
+			// Draw line graphs
 			glUseProgram(line2DvertFragShadersID);
-			glUniform1ui(25, i_frame);
+			glUniform1ui(25, i_frame_in_current_chunk);
 			glUniform1ui(26, 1); //whatToPlot: 1 u, 2 gj
 			// glMemoryBarrier(GL_ALL_BARRIER_BITS);
 			glBindVertexArray(VAO2);
@@ -588,6 +791,39 @@ int main(void)
 			glMemoryBarrier(GL_ALL_BARRIER_BITS);
 			glDrawArrays(GL_LINE_STRIP, 0, line_points_count);
 			glMemoryBarrier(GL_ALL_BARRIER_BITS);
+
+			if ((i_frame + 1) % frame_chunk_size == 0)
+			{
+				size_t last_iter = current_frame_chunk * frame_chunk_size;
+
+				glMemoryBarrier(GL_ALL_BARRIER_BITS);
+				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u_reg);
+				glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, frame_chunk_size * sizeX * sizeY * sizeof(ssb_u_reg_host[0]), ssb_u_reg_host);
+				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_reg);
+				glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, frame_chunk_size * sizeX * sizeY * 3 * sizeof(ssb_gj_reg_host[0]), ssb_gj_reg_host);
+				glMemoryBarrier(GL_ALL_BARRIER_BITS);
+
+				attributesIn["frames_count"] = last_iter;
+				z5::writeAttributes(dsHandle, attributesIn);
+
+				z5::types::ShapeType offset = {last_iter, 0, 0};
+				auto size = frame_chunk_size * sizeY * sizeX;
+				std::vector<std::size_t> shape = {frame_chunk_size, sizeY, sizeX};
+				auto array = xt::adapt(ssb_u_reg_host, size, xt::no_ownership(), shape);
+				z5::multiarray::writeSubarray<float>(u_ds, array, offset.begin());
+
+				z5::types::ShapeType offset1 = {last_iter, 0, 0, 0};
+				auto size1 = frame_chunk_size * sizeY * sizeX * 3;
+				std::vector<std::size_t> shape1 = {frame_chunk_size, sizeY, sizeX, 3};
+				auto array1 = xt::adapt(ssb_gj_reg_host, size1, xt::no_ownership(), shape1);
+				z5::multiarray::writeSubarray<float>(gj_ds, array1, offset1.begin());
+
+				printf("\ncurrent_frame_chunk: %d \n", current_frame_chunk);
+				printf("\n***iter_in_chunk %d, simul %.2f ms\n", i_frame_in_current_chunk, i * .02f);
+
+				current_frame_chunk++;
+			}
+			i_frame++;
 
 			// // Swap buffers
 			glfwSwapBuffers(window);
@@ -660,7 +896,7 @@ int main(void)
 						}
 					}
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_par);
-				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(float), ssb_gj_par_host, GL_DYNAMIC_COPY);
+				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(ssb_gj_par_host[0]), ssb_gj_par_host, GL_DYNAMIC_COPY);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				printf(" Go,Gc (NW) = ");
 				int i = 1; //for (int i = 0; i < 3; i++) // W, NW, NE
@@ -692,7 +928,7 @@ int main(void)
 						}
 					}
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_par);
-				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(float), ssb_gj_par_host, GL_DYNAMIC_COPY);
+				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(ssb_gj_par_host[0]), ssb_gj_par_host, GL_DYNAMIC_COPY);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				printf(" Go,Gc (NW) = ");
 				int i = 1; //for (int i = 0; i < 3; i++) // W, NW, NE
@@ -729,7 +965,7 @@ int main(void)
 						}
 					}
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_par);
-				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(float), ssb_gj_par_host, GL_DYNAMIC_COPY);
+				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(ssb_gj_par_host[0]), ssb_gj_par_host, GL_DYNAMIC_COPY);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				printf(" Go,Gc (NW) = ");
 				int i = 1; //for (int i = 0; i < 3; i++) // W, NW, NE
@@ -766,7 +1002,7 @@ int main(void)
 						}
 					}
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_par);
-				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(float), ssb_gj_par_host, GL_DYNAMIC_COPY);
+				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(ssb_gj_par_host[0]), ssb_gj_par_host, GL_DYNAMIC_COPY);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				printf(" Go,Gc (NW) = ");
 				int i = 1; //for (int i = 0; i < 3; i++) // W, NW, NE
@@ -798,7 +1034,7 @@ int main(void)
 						}
 					}
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_par);
-				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(float), ssb_gj_par_host, GL_DYNAMIC_COPY);
+				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(ssb_gj_par_host[0]), ssb_gj_par_host, GL_DYNAMIC_COPY);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				printf(" v0 = ");
 				printf("%f, ", v0);
@@ -820,7 +1056,7 @@ int main(void)
 						}
 					}
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_par);
-				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(float), ssb_gj_par_host, GL_DYNAMIC_COPY);
+				glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * 2 * 7 * sizeX * sizeY * sizeof(ssb_gj_par_host[0]), ssb_gj_par_host, GL_DYNAMIC_COPY);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				printf(" v0 = ");
 				printf("%f, ", v0);
@@ -878,13 +1114,16 @@ int main(void)
 			}
 			glfwMakeContextCurrent(NULL);
 			mtx.unlock();
-			if (i_frame < i_frame_max)
-				i_frame++;
-			else
+			if (i >= t_max/par.dt)
 				//i_frame = 0;
 				break;
+			// if (i_frame < i_frame_max)
+			// 	i_frame++;
+			// else
+			// 	//i_frame = 0;
+			// 	break;
 			std::this_thread::sleep_for(std::chrono::microseconds(100));
-		}
+		} // main loop
 
 		GLenum err = glGetError();
 		if (err)
@@ -907,7 +1146,7 @@ int main(void)
 				break;
 			case 2: //getVm
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u);
-				glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeX * sizeY * sizeof(float), ssb_u_host);
+				glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeX * sizeY * sizeof(ssb_u_host[0]), ssb_u_host);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				queueReply.push(ssb_u_host);
 				break;
@@ -919,35 +1158,144 @@ int main(void)
 	} // Check if the ESC key was pressed or the window was closed
 	while (glfwGetKey(window, GLFW_KEY_ESCAPE) != GLFW_PRESS &&
 		   glfwWindowShouldClose(window) == 0);
-
+	printf("... nDone.\n");
 	t_end = clock();
 
 	glfwMakeContextCurrent(window);
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj);
-	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 3 * sizeX * sizeY * sizeof(float), ssb_gj_host);
-	glMemoryBarrier(GL_ALL_BARRIER_BITS);
+	// glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj);
+	// glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 3 * sizeX * sizeY * sizeof(ssb_gj_host[0]), ssb_gj_host);
+	// glMemoryBarrier(GL_ALL_BARRIER_BITS);
 
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_reg);
-	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 2 * i_frame_max * sizeof(float), ssb_gj_reg_host);
-	glMemoryBarrier(GL_ALL_BARRIER_BITS);
+	// try
+	// {
+	// glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u);
+	// glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeX * sizeY * sizeof(ssb_u_host[0]), ssb_u_host);
+	// glMemoryBarrier(GL_ALL_BARRIER_BITS);
+	// 		}
+	// catch (const std::exception &exc)
+	// {
+	// 	std::cerr << exc.what();
+	// 	// std::cout << exc.what();
+	// }
+	
+	
+	// for (int i = 0; i < sizeX * sizeY ; i++)
+	// 	printf("%d ", ssb_u_host[i]);
 
+	// glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_reg);
+	// glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 3 *i_frame_max* sizeX*sizeY *  sizeof(ssb_gj_reg_host[0]), ssb_gj_reg_host);
+	// glMemoryBarrier(GL_ALL_BARRIER_BITS);
+
+
+
+	//
 	//export data to file
-	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_dbg);
-	glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 3 * i_frame_max * sizeof(float), ssb_dbg_host);
-	glMemoryBarrier(GL_ALL_BARRIER_BITS);
-	std::ofstream myfile;
-	myfile.open("reg.csv");
-	myfile << "t,v1,v2,v_end,gj_reg1,gj_reg2\n";
-	for (int i = 0; i < i_frame; i++)
-		myfile << i * itersInFrame * par.dt << ","
-			   << ssb_dbg_host[i * 3 + 0] << ","
-			   << ssb_dbg_host[i * 3 + 1] << ","
-			   << ssb_dbg_host[i * 3 + 2] << ","
-			   << ssb_gj_reg_host[0 * i_frame_max + i] << ","
-			   << ssb_gj_reg_host[1 * i_frame_max + i]
-			   << std::endl;
-	myfile.close();
-	printf("\n\nResults file 'reg.csv' wrote.");
+	//
+	// csv file
+	// glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_dbg);
+	// glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, dbg_size * i_frame_max * sizeof(ssb_dbg_host[0]), ssb_dbg_host);
+	// glMemoryBarrier(GL_ALL_BARRIER_BITS);	
+	// std::ofstream myfile;
+	// myfile.open("reg.csv");
+	// myfile << "t,v1,v2,v3,v4,v5,v6,v7,gj1,gj2,gj3\n";
+	// for (int i = 0; i < i_frame; i++)
+	// 	myfile << i * itersInFrame * par.dt
+	// 	 	  //TODO: dbg_ --->> pakeist i u_reg
+	// 		   << "," << ssb_dbg_host[i * dbg_size + 0] //v1
+	// 		   << "," << ssb_dbg_host[i * dbg_size + 1] //v2
+	// 		   << "," << ssb_dbg_host[i * dbg_size + 2] //v3
+	// 		   << "," << ssb_dbg_host[i * dbg_size + 3] //v4
+	// 		   << "," << ssb_dbg_host[i * dbg_size + 4] //v5
+	// 		   << "," << ssb_dbg_host[i * dbg_size + 5] //v6
+	// 		   << "," << ssb_dbg_host[i * dbg_size + 7] //v7
+	// 		   << "," << ssb_gj_reg_host[0 * i_frame_max + i] 
+	// 		   << "," << ssb_gj_reg_host[1 * i_frame_max + i]
+	// 		   << "," << ssb_gj_reg_host[2 * i_frame_max + i]
+	// 		   << std::endl;
+	// myfile.close();
+	// printf("\n\nResults file 'reg.csv' wrote.");
+
+
+	// writes u_reg[iframe*sizeX*sizeX] ir gj_reg[iframe*sizeX*sizeX]
+    // std::vector<float_t> data(ssb_u_reg_host, ssb_u_reg_host + sizeof ssb_u_reg_host / sizeof ssb_u_reg_host[0]);
+	// size_t bytes = sizeof(data[0]) * data.size();
+    // auto binFile = std::fstream("reg.binary", std::ios::out | std::ios::binary);
+    // binFile.write((char*)&data[0], bytes);
+    // binFile.close();
+	
+	// std::ofstream out;
+	// out.open( "reg.binary", std::ios::out | std::ios::binary);
+	// float f[3] = {1.1,2.2,3.2};
+	// out.write( reinterpret_cast<const char*>( &f ), sizeof f / sizeof f[0]);
+	// out.close();	
+	// FILE *fp;
+	// fp = fopen("reg.binary", "wb");
+	// fwrite(reinterpret_cast<char*>(ssb_u_reg_host), 1, i_frame_max * sizeX*sizeY * sizeof(float), fp);
+	// fclose(fp);
+	// std::vector<float> data(ssb_u_reg_host, ssb_u_reg_host + sizeof ssb_u_reg_host / sizeof ssb_u_reg_host[0]);
+
+
+	// // Binary files
+
+	// unsigned uptoFrame = i_frame;
+	// //write Voltage
+	// printf("Writing file 'reg_u_xy_iFrame.npy'...");
+	// std::vector<float> data;//(std::begin(*ssb_u_reg_host), std::end(*ssb_u_reg_host));
+	// data.assign(ssb_u_reg_host, ssb_u_reg_host+uptoFrame*sizeY*sizeX);
+	// const long unsigned leshape [] = {uptoFrame,sizeY,sizeX};
+  	// npy::SaveArrayAsNumpy("reg_u_xy_iFrame.npy", false, 3, leshape, data);
+	// printf(" Done.\n"); 	
+
+	// // //write GJ - 1d array
+	// // printf("Writing file 'reg_gj_xy_iFrame_orientation.npy'...");
+	// // std::vector<float> data2;//(std::begin(*ssb_u_reg_host), std::end(*ssb_u_reg_host));
+	// // data2.assign(ssb_gj_reg_host, ssb_gj_reg_host+3*uptoFrame*sizeY*sizeX);
+	// // const long unsigned leshape2 [] = {uptoFrame*sizeY*sizeX*3};
+  	// // npy::SaveArrayAsNumpy("reg_gj_xy_iFrame_orientation.npy", false, 1, leshape2, data2);
+	// // printf(" Done.\n,%d", uptoFrame);
+
+		
+	// printf("Writing file 'reg_gj_xy_iFrame_orientation.npy'...");
+	// // float arr[] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24};
+	// // std::vector<float> data2 = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24};//(std::begin(*ssb_u_reg_host), std::end(*ssb_u_reg_host));
+	// std::vector<float> data2 {};//(std::begin(*ssb_u_reg_host), std::end(*ssb_u_reg_host));
+	// // data2.assign(arr, arr+24);
+	// data2.assign(ssb_gj_reg_host, ssb_gj_reg_host + (uptoFrame+1)*sizeY*sizeX*3);
+	// // data2.assign(ssb_gj_reg_host, ssb_gj_reg_host+(uptoFrame+1)*sizeY*sizeX*3-1);
+	// const long unsigned leshape2 [] = {uptoFrame+1,sizeY,sizeX,3};
+	// // const long unsigned leshape2 [] = {2,2,2,3};
+  	// npy::SaveArrayAsNumpy("reg_gj_orientation_xy_iFrame.npy", false, 4, leshape2, data2);
+	// printf(" Done.\n");
+
+	// printf("\nLast frame: %d \n", uptoFrame);
+
+
+		// auto i_frame_in_last_chunk = 33;   // kiek i_frame itaraciju paskutiniam chunk (svarbu, nes gali buti sustabdytas viduty skaiciavimo)
+		// // write array to roi
+		// auto last_iter = current_frame_chunk * frame_chunk_size + i_frame_in_last_chunk;
+		
+		// z5::types::ShapeType offset1 = {0, 0, 0};
+
+		// auto size = i_frame_in_last_chunk * sizeY * sizeX;
+		// std::vector<std::size_t> shape = {i_frame_in_last_chunk, sizeY, sizeX};
+		// auto array1 = xt::adapt(ssb_u_reg_host, size, xt::no_ownership(), shape);
+		// z5::multiarray::writeSubarray<float>(ds, array1, offset1.begin());
+
+
+
+	// cout << "zarr done\n";
+
+	// std::ofstream myfile2;
+	// myfile2.open("dbg.csv");
+	// myfile2 << "i,dbg\n";
+	// for (int i = 0; i < 20; i++) {
+	// 	myfile2 << i << ",";
+	// 	for (int k = 0; k < 16; k++)
+	// 		myfile2 << ssb_dbg_host[i*16+k] << ",";
+	// 	myfile2 << std::endl;
+	// }
+	// myfile2.close();
+	// printf("\n\nfile 'dbg.csv' wrote.");
 
 	// Cleanup VBO
 	glDeleteVertexArrays(1, &VAO);
@@ -975,7 +1323,7 @@ int main(void)
 
 	double execTime = (double)(t_end - t_start) / CLOCKS_PER_SEC;
 	printf("\nTime required for execution: %f sec., FPS averange: %f\n", execTime,
-		   i_frame / execTime);
+		   (float)i / itersInFrame / execTime);
 	//system("PAUSE");
 
 	(*serverPtr)->Shutdown();
@@ -1134,6 +1482,7 @@ void APIENTRY glDebugOutput(GLenum source,
 	}
 	std::cout << std::endl;
 	std::cout << std::endl;
+	exit(1);
 }
 
 //*******************
@@ -1158,14 +1507,15 @@ class FentonControlServiceImpl final : public FentonControl::Service
 		cout << "\nLocked\n";
 		glfwMakeContextCurrent(window);
 		glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u);
-		glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeX * sizeY * sizeof(float), ssb_u_host);
+		glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeX * sizeY * sizeof(ssb_u_host[0]), ssb_u_host);
 		glMemoryBarrier(GL_ALL_BARRIER_BITS);
 		// glClear(GL_COLOR_BUFFER_BIT);
 		// std::this_thread::sleep_for(std::chrono::seconds(3));
 		glfwMakeContextCurrent(NULL);
 		mtx.unlock();
 		cout << "\nUnlocked\n";
-		float *Vm = ssb_u_host;
+		float *Vm = ssb_u_host; // kai float
+		// double *Vm = ssb_u_host; // kai double
 
 		// float ar[2][2] = {{1, 2}, {3, 4}};
 		// reply->set_vm();
