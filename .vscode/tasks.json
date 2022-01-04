@@ -3,43 +3,19 @@
     // for the documentation about the tasks.json format
     "version": "2.0.0",
     "tasks": [
-        {
-            "label": "init",
-            "type": "shell",
-            "options": {            
-                "cwd": "${workspaceFolder}",
-            },
-            "command": "C:/Miniconda3/Scripts/activate",
-            "args": [""],
-            "presentation": {
-                "showReuseMessage": false
-            }
-        },
-        {
-            "label": "activate py38",
-            "type": "shell",
-            "options": {            
-                "cwd": "${workspaceFolder}",
-            },
-            "command": "conda",
-            "args": ["activate", "py38"],
-            "presentation": {
-                "showReuseMessage": false
-            }
-        },        
-        {
-            "label": "plotResultFile",
-            "type": "shell",
-            "options": {            
-                "cwd": "${workspaceFolder}",
-            },
-            // "dependsOrder": "sequence",
-            // "dependsOn" :[ "init", "activate py38"],
-            "command": "C:/Miniconda3/Scripts/activate & conda activate py38 & C:/Miniconda3/envs/py38/python.exe c:/OpenGL/fentonGjOpenGL/fentonPlotFile.py",
-            // "args": ["c:/OpenGL/fentonGjOpenGL/fentonPlotFile.py"],
-            "presentation": {
-                "showReuseMessage": false
-            }
-        }
+        // {
+        //     "label": "plotResultFile",
+        //     "type": "shell",
+        //     "options": {            
+        //         "cwd": "${workspaceFolder}",
+        //     },
+        //     // "dependsOrder": "sequence",
+        //     // "dependsOn" :[ "init", "activate py38"],
+        //     "command": "C:/Miniconda3/Scripts/activate & conda activate py38 & C:/Miniconda3/envs/py38/python.exe c:/OpenGL/fentonGjOpenGL/fentonPlotFile.py",
+        //     // "args": ["c:/OpenGL/fentonGjOpenGL/fentonPlotFile.py"],
+        //     "presentation": {
+        //         "showReuseMessage": false
+        //     }
+        // }
     ]
 }

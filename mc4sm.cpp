@@ -423,7 +423,7 @@ double mc4sm(double Vj, double dt, double *par, double *p, double limit)
     return gj;
 }
 
-void main()
+int main()
 {
     // Cx43/45 hetero
     double gmax = 1.0e-9;                                                                        //.e-9;
@@ -470,4 +470,5 @@ void main()
     }
     outFile.close();
     cout << "Done.";
+    return 0;
 }

@@ -47,7 +47,7 @@ using helloworld::VmReply;
 #include <iostream>
 #include <fstream>
 #include <time.h>
-#include <Windows.h>
+// #include <Windows.h>
 #include <thread>
 #include <queue>
 #include <mutex>
@@ -63,7 +63,7 @@ GLFWwindow *window;
 #include "shader.hpp"
 // using namespace std;
 
-void mouse_button_callback(GLFWwindow *window, int button, int action, int mods);
+static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods);
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods);
 void RunServer(std::unique_ptr<grpc::Server> *serverPtr);
 void APIENTRY glDebugOutput(GLenum source, GLenum type, unsigned int id, GLenum severity,
@@ -84,7 +84,7 @@ std::mutex mtx;
 std::unique_ptr<grpc::Server> *serverPtr;
 
 // grpc control interface
-bool pause = false;
+bool paused = false;
 
 clock_t t_start, t_end;
 
@@ -139,9 +139,9 @@ int main(void)
 
 	cout << "Starting..\n";
 
-	HWND consoleWindow = GetConsoleWindow();
+	// HWND consoleWindow = GetConsoleWindow();
 
-	SetWindowPos(consoleWindow, 0, 0, 500, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+	// SetWindowPos(consoleWindow, 0, 0, 500, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
 
 	std::thread serverThread(RunServer, serverPtr); //TODO: clean server shutdown
 
@@ -716,7 +716,7 @@ int main(void)
 	t_start = clock();
 	do // main Loop
 	{
-		if (!pause)
+		if (!paused)
 		{
 			mtx.lock();
 			glfwMakeContextCurrent(window);			
@@ -1140,9 +1140,9 @@ int main(void)
 			queueCmd.pop();
 			switch (cmd)
 			{
-			case 1: //pause
+			case 1: //pause_
 				/* code */
-				pause = !pause;
+				paused = !paused;
 				break;
 			case 2: //getVm
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u);
@@ -1324,7 +1324,7 @@ int main(void)
 	double execTime = (double)(t_end - t_start) / CLOCKS_PER_SEC;
 	printf("\nTime required for execution: %f sec., FPS averange: %f\n", execTime,
 		   (float)i / itersInFrame / execTime);
-	//system("PAUSE");
+	//system("pause_");
 
 	(*serverPtr)->Shutdown();
 	serverThread.join();
@@ -1496,7 +1496,7 @@ class FentonControlServiceImpl final : public FentonControl::Service
 	Status StopSim(ServerContext *context, const helloworld::Empty *request, helloworld::Empty *response) override
 	{
 		printf("StopSim\n");
-		queueCmd.push(1); // pause
+		queueCmd.push(1); // pause_
 		return Status::OK;
 	}
 	Status getVm(ServerContext *context, const ::google::protobuf::Empty *request,
