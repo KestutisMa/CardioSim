@@ -11,7 +11,8 @@
 			"random": "cpp",
 			"xstring": "cpp",
 			"vector": "cpp",
-			"xutility": "cpp"
+			"xutility": "cpp",
+			"thread": "cpp"
 		}
 	},
 	"launch": {

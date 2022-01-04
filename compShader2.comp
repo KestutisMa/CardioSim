@@ -64,13 +64,25 @@ void main() {
     
     float pulse_width = 2; //ms
     // float pulse1 = 60*4.f;// BPM // CV meas
-    float pulse1 = 120.f;// BPM
-    float pulse2 = 120.f;// BPM
-    float pulse3 = 180.f;// BPM
-    float pulse4 = 240.f;// BPM
+    float pulse1 = 60.f;// BPM
+    float pulse2 = 75.f;// BPM
+    float pulse3 = 90.f;// BPM
+    float pulse4 = 105.f;// BPM
+    float pulse5 = 120.f;// BPM
+    float pulse6 = 135.f;// BPM
+    float pulse7 = 150.f;// BPM
+    float pulse8 = 165.f;// BPM
+    float pulse9 = 180.f;// BPM
+    float pulse10 = 240.f;// BPM
     float t_switch_to_pulse2 = 40000.f;// nuo kada pradeti pulse2, ms
     float t_switch_to_pulse3 = 80000.f;// nuo kada pradeti pulse2, ms
     float t_switch_to_pulse4 = 120000.f;// nuo kada pradeti pulse2, ms
+    float t_switch_to_pulse5 = 160000.f;// nuo kada pradeti pulse2, ms
+    float t_switch_to_pulse6 = 200000.f;// nuo kada pradeti pulse2, ms
+    float t_switch_to_pulse7 = 240000.f;// nuo kada pradeti pulse2, ms
+    float t_switch_to_pulse8 = 280000.f;// nuo kada pradeti pulse2, ms
+    float t_switch_to_pulse9 = 320000.f;// nuo kada pradeti pulse2, ms
+    float t_switch_to_pulse10 = 360000.f;// nuo kada pradeti pulse2, ms
     
     const float minute_ms = 60000.f; // kiek ms vienoje minuteje
     
@@ -86,10 +98,12 @@ void main() {
     // int second = 250; // ms
     //			while (true) {
     //			}
+    // float pulse_period_i = pulse_period * 1./dt_sim; // pulso periodas iteracijom
     I_ext = //( (i*dt_sim > first && i*dt_sim < first+2)
             //||  (i*dt_sim > first+delay && i*dt_sim < first+delay + 1) ) &&
         // ((i >= first * 1./dt && i <= (first + pulse_width) * 1./dt) || // kai naudojamas pulse1
-         (  i % int(pulse_period * 1./dt_sim) >= 0    &&   i % int(pulse_period * 1./dt_sim) <= int(pulse_width * 1./dt_sim) )
+         (  i % int(pulse_period/dt_sim) >= 0    &&   i % int(pulse_period/dt_sim) <= int(pulse_width/dt_sim) )
+        //  (  i % (50*100) > 0 && i % (50*100) < 50*2 )
                 //   ||
                 //  (i >= second * 50 &&
                 //   i <= (second + 2) * 50)) // periodinis stim. 100it(2ms)
@@ -99,7 +113,7 @@ void main() {
                 // && (pow(int(y) - 10-1, 2) + pow(int(x) - 4 + 5, 2) <= 5) // zad. apvali zona kaireje apacioje
                 // && (pow(int(y) - 32, 2) + pow(int(x) - (32-10), 2) <= 3*3) // zad. apvali zona
                 && (x == 0) // zad. plokscia banga
-            ? .5f
+            ? .2f
             : 0;
 
     // I_ext = 1.f;

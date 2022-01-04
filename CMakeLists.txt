@@ -1,4 +1,4 @@
-# list(APPEND CMAKE_PREFIX_PATH "C:/Miniconda3/envs/py38")
+# list(APPEND CMAKE_PREFIX_PATH "C:/Miniconda3/envs/py39")
 message("**********************\ncmake PrefixPath\n*****************" ${CMAKE_PREFIX_PATH})
 
 cmake_minimum_required(VERSION 3.0.0)

@@ -769,7 +769,7 @@ void main() {
       const float limit = 4.83;
       // const float limit = 0.1135;
         float A = 2.f; // aniz
-        float g_parallel = 5e-9f; //parallel gj (non-gated)
+        float g_parallel = 0; //parallel gj (non-gated)
         // float g_parallel = 0.6e-8f/A; //parallel gj (non-gated) trink
         // g_parallel *= 1e-18;  // isjungiam parallel      
       if (i == 0) {
@@ -777,9 +777,9 @@ void main() {
         // mc4sm_ss(1, (VjNW) *1e3);
         // mc4sm_ss(3, (VjNE) *1e3);
         // float p[4] = float[](0.,0.,0.,0.);
-        gj[y * size.x * 3 + x * 3 + 0] = mc4sm_ss(0, 0 * 1e3, limit)+ g_parallel;
-        gj[y * size.x * 3 + x * 3 + 1] = mc4sm_ss(1, 0 * 1e3, limit)+ g_parallel / A;
-        gj[y * size.x * 3 + x * 3 + 2] = mc4sm_ss(2, 0 * 1e3, limit)+ g_parallel / A;
+        gj[y * size.x * 3 + x * 3 + 0] = mc4sm_ss(0, 0 * 1e3, limit);//+ g_parallel;
+        gj[y * size.x * 3 + x * 3 + 1] = mc4sm_ss(1, 0 * 1e3, limit);//+ g_parallel / A;
+        gj[y * size.x * 3 + x * 3 + 2] = mc4sm_ss(2, 0 * 1e3, limit);//+ g_parallel / A;
       } else if (i % skip == 0 && gjModelEnabled) {
         // gj[y*size.x*3+x*3 + 0] = mc4sm(0, (VjW) *1e3, dt_sim*10.);
         // gj[y*size.x*3+x*3 + 1] = mc4sm(1, (VjNW) *1e3, dt_sim*10.);
@@ -796,9 +796,9 @@ void main() {
           // gj[y * size.x * 3 + x * 3 + 2] = mc4sm(2, (VjNE)*1e3, dt_sim * skip * 0.001, limit) + g_parallel;
           
           // geros
-          gj[y * size.x * 3 + x * 3 + 0] = mc4sm(0, (VjW)*1000.f, dt_sim * skip * 0.001f, limit)  + g_parallel; // *0.001, ms->s nes dt_sim (is main()) yra ms, o mc4sm s
-          gj[y * size.x * 3 + x * 3 + 1] = mc4sm(1, (VjNW)*1000.f, dt_sim * skip * 0.001f, limit) + g_parallel / A;
-          gj[y * size.x * 3 + x * 3 + 2] = mc4sm(2, (VjNE)*1000.f, dt_sim * skip * 0.001f, limit) + g_parallel / A;
+          gj[y * size.x * 3 + x * 3 + 0] = mc4sm(0, (VjW)*1000.f, dt_sim * skip * 0.001f, limit)  ;//+ g_parallel; // *0.001, ms->s nes dt_sim (is main()) yra ms, o mc4sm s
+          gj[y * size.x * 3 + x * 3 + 1] = mc4sm(1, (VjNW)*1000.f, dt_sim * skip * 0.001f, limit) ;//+ g_parallel / A;
+          gj[y * size.x * 3 + x * 3 + 2] = mc4sm(2, (VjNE)*1000.f, dt_sim * skip * 0.001f, limit) ;//+ g_parallel / A;
 
           // gj[y * size.x * 3 + x * 3 + 0] =g_parallel*A;
           // gj[y * size.x * 3 + x * 3 + 1] =g_parallel;

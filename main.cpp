@@ -94,13 +94,14 @@ queue<int> queueCmd;
 queue<float *> queueReply; // kai float
 // queue<double *> queueReply; // kai double
 
-const size_t sizeX = 90; // lasteliu turi buti lyginis skaicius, kad veiktu periodic boudaries
+const size_t sizeX = 50; // lasteliu turi buti lyginis skaicius, kad veiktu periodic boudaries
 const size_t sizeY = 2;
 const size_t workGroupSizeX = 32; //32
 const size_t workGroupSizeY = 32; //32
-const size_t itersInFrame = 10;
+const size_t itersInFrame = 1;  // dt_reg = dt_sim * itersInFrame
 // **** Simulacijos trukme
-const float t_max = 160000.f; //ms
+// const float t_max = 160000.f; //ms
+const float t_max = 400000.f; //ms
 const size_t frame_chunk_size = 100; // kiek i_frame itaraciju vienam chunk
 // Open a window and create its OpenGL context
 int scale = 600;
@@ -248,7 +249,7 @@ int main(void)
 			float A = 2.f; //anisotropy
 			
 			float gmax43 = 300e-9f; //600 300
-			float gmax4543 = 36e-9f;//64 46
+			float gmax4543 = 46e-9f;//64 46
 			// float gmax43 = 300e-9f; // susidaro prie 75-120-240 pulso
 			// float gmax4543 = 45e-9f;
 			//cx43
@@ -354,8 +355,8 @@ int main(void)
 				{
 					// const float cx_change_rate = 0.9;
 					// bool is4345 = uint_dist100(rng) <= 60 * ( (float)x/sizeX*cx_change_rate );
-					bool isNonCond = uint_dist100(rng) >= 90; // cx43 ar cx4345 heterotyp. tikymybe
-					bool is4345 = uint_dist100(rng) >= 50; // cx43 ar cx4345 heterotyp. tikymybe
+					bool isNonCond = uint_dist100(rng) >= 60; // cx43 ar cx4345 heterotyp. tikymybe
+					bool is4345 = uint_dist100(rng) >= 40; // cx43 ar cx4345 heterotyp. tikymybe
 					bool orientation = uint_dist100(rng) >= 50; // orientacija erdveje issibarsciusi vienodomis tikimybemis
 					for (int ii = 0; ii < 7 * 2; ii++)						//copy all parameters of all gates
 					{
@@ -370,14 +371,16 @@ int main(void)
 
 						// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
 						// if (x > 30 ) //heterotypic box, Cx43-45 zona		
-						if (x > 10 && (x % 20 > 0) && (x % 20 <= 2) ) //kas 20 po 2 last, Cx43-45 zona		
+						if (x > 10 && (x % 20 > 0) && (x % 20 <= 2) ) //kas 20 po 2 last, Cx43-45 zona		straipsniui
 						// if (x > 10 && (x % 20 > 0) && (x % 20 <= 10) ) //cv bandymai, Cx43-45 zona		
-						// if (is4345) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+						// if (is4345 && i != 1) //reentry tyrimams Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+						// if (x >= 70 && x <= 72 && y >= 75-50 && y < 75+50)
 							ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];
 						// if (i == 2) //NE,
 						// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];;
 						// }
-						else // Cx43 zona
+						else
+						// if (!isNonCond) // Cx43 zona
 						   {
 							// if (isNonCond && ( x >= 15 && (x % 10 == 3) ) ) { // cx43 zonoje pridedam kliuciu, kad sumazinti sroves nusiurbima
 								// if (ii == 5 || ii == 6 || ii == 12 || ii == 13) //go1,2 gc1,2 = labai mazas
@@ -683,8 +686,10 @@ int main(void)
 	//glDrawElements(GL_TRIANGLES, (sizeX - 1) * (sizeY - 1) * 2 * 3, GL_UNSIGNED_INT, 0);
 
 	// Zarr
-	std::filesystem::remove_all("data1.zr");
-	z5::filesystem::handle::File f("data1.zr", z5::FileMode::modes::w);
+	// std::filesystem::remove_all("data1.zr");
+	std::filesystem::remove_all("d:\data_tmp1.zr");
+	// z5::filesystem::handle::File f("data1.zr", z5::FileMode::modes::w);
+	z5::filesystem::handle::File f("d:\data_tmp1.zr", z5::FileMode::modes::w);
 
 	// create the file in zarr format
 	const bool createAsZarr = true;
@@ -705,6 +710,7 @@ int main(void)
 
 	// get handle for the dataset
 	const auto dsHandle = z5::filesystem::handle::Dataset(f, dsName);
+	const auto dsHandle1 = z5::filesystem::handle::Dataset(f, dsName1);
 
 	// read and write json attributes
 	nlohmann::json attributesIn;
@@ -724,7 +730,7 @@ int main(void)
 			//Sleep(50);
 			// printf("\rframe %d, iter %d, simul %.2f ms", i_frame, i, i * .02f);
 			auto i_frame_in_current_chunk = i_frame % frame_chunk_size;
-			printf("\riter %d, iter_in_chunk %d, simul %.2f ms", i, i_frame_in_current_chunk, i * .02f);
+			// printf("\riter %d, iter_in_chunk %d, simul %.2f ms", i, i_frame_in_current_chunk, i * .02f);
 			for (int a = 0; a < itersInFrame; a++) //i loop
 			{ // launch compute shaders!
 				// glMemoryBarrier(GL_ALL_BARRIER_BITS);
@@ -768,6 +774,12 @@ int main(void)
 				// 			//if (i == 4)
 				// exit(0);//return 0;
 			}
+
+
+			if ((i_frame + 1) % frame_chunk_size == 0)
+			{
+			printf("\riter %d, iter_in_chunk %d, simul %.2f ms", i, i_frame_in_current_chunk, i * .02f);				
+			// perkelta update kas chunk
 			glUseProgram(vertFragShadersID); //;glUseProgram(shIDs.frVeID);
 			//glPointSize(5.f);
 			// glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); //wireframe mode
@@ -791,9 +803,8 @@ int main(void)
 			glMemoryBarrier(GL_ALL_BARRIER_BITS);
 			glDrawArrays(GL_LINE_STRIP, 0, line_points_count);
 			glMemoryBarrier(GL_ALL_BARRIER_BITS);
+			// END perkelta update kas chunk
 
-			if ((i_frame + 1) % frame_chunk_size == 0)
-			{
 				size_t last_iter = current_frame_chunk * frame_chunk_size;
 
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
@@ -803,8 +814,11 @@ int main(void)
 				glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, frame_chunk_size * sizeX * sizeY * 3 * sizeof(ssb_gj_reg_host[0]), ssb_gj_reg_host);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 
+std::async([&] {
 				attributesIn["frames_count"] = last_iter;
+				attributesIn["dt_reg"] = itersInFrame * par.dt;
 				z5::writeAttributes(dsHandle, attributesIn);
+				z5::writeAttributes(dsHandle1, attributesIn);
 
 				z5::types::ShapeType offset = {last_iter, 0, 0};
 				auto size = frame_chunk_size * sizeY * sizeX;
@@ -820,10 +834,10 @@ int main(void)
 
 				printf("\ncurrent_frame_chunk: %d \n", current_frame_chunk);
 				printf("\n***iter_in_chunk %d, simul %.2f ms\n", i_frame_in_current_chunk, i * .02f);
+});				
 
 				current_frame_chunk++;
-			}
-			i_frame++;
+
 
 			// // Swap buffers
 			glfwSwapBuffers(window);
@@ -1112,8 +1126,11 @@ int main(void)
 				// printf(" Anis = %f\n", goW / goNW);
 				printf("not implemented");
 			}
+						}
+			i_frame++;// perkelta update kas chunk						
 			glfwMakeContextCurrent(NULL);
 			mtx.unlock();
+
 			if (i >= t_max/par.dt)
 				//i_frame = 0;
 				break;
@@ -1123,6 +1140,7 @@ int main(void)
 			// 	//i_frame = 0;
 			// 	break;
 			std::this_thread::sleep_for(std::chrono::microseconds(100));
+
 		} // main loop
 
 		GLenum err = glGetError();
@@ -1548,7 +1566,7 @@ class FentonControlServiceImpl final : public FentonControl::Service
 
 void RunServer(std::unique_ptr<Server> *serverPtr) // serverPtr - to control server (shitdown) from another thread
 {
-	std::string server_address("0.0.0.0:8001");
+	std::string server_address("0.0.0.0:8002");
 	FentonControlServiceImpl service;
 
 	ServerBuilder builder;

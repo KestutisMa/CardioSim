@@ -26,7 +26,22 @@
             "presentation": {
                 "showReuseMessage": false
             }
-        },        
+        },  
+        {
+            "label": "run release fenton",
+            "type": "shell",
+            "options": {            
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "${env:PATH};${workspaceFolder};C:/Miniconda3/envs/py39/Library/bin",
+                }
+            },
+            "command": "${workspaceFolder}/build/Release/fentonGjOpenGL.exe",
+            // "args": ["activate", "py38"],
+            "presentation": {
+                "showReuseMessage": false
+            }
+        },                
         {
             "label": "plotResultFile",
             "type": "shell",

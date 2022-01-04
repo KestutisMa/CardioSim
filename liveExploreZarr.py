@@ -21,15 +21,15 @@ pn.extension(comms='vscode')
 #%%
 %%time
 
-gj_plot_cell_x = np.array([22])
-gj_plot_cell_y = np.array([0])
-
 gj_min = 10e-9 # map coloerscale
 gj_max = 30e-9
 
 # cv_meas_cell_x = [21, 22]
 cv_meas_cell_x = [20, 40]
 cv_meas_cell_y = [0, 0]
+
+gj_plot_cell_x = np.array([22])
+gj_plot_cell_y = np.array([0])
 
 # u_plot_cell_x = np.array([20, 40])
 u_plot_cell_x = np.array([21, 22])
@@ -39,27 +39,41 @@ u_plot_cell_y = np.array([0, 0])
 # gj = np.load('reg_gj_orientation_xy_iFrame.npy')
 
 # f = z5py.File(r'C:\OpenGL\fentonGjOpenGL\build\RelWithDebInfo\data1.zr', use_zarr_format=True)
-# f = z5py.File(r'C:\OpenGL\fentonGjOpenGL\build\RelWithDebInfo\data1-2021-12-16 300-46nS 60-120-180-240bpm.zr', use_zarr_format=True) #krenta geras
-f = z5py.File(r'C:\OpenGL\fentonGjOpenGL\data1.zr', use_zarr_format=True)
+f = z5py.File(r'd:\data_tmp.zr', use_zarr_format=True)
+# f = z5py.File(r'C:\OpenGL\fentonGjOpenGL\results\data1-2021-12-16 300-46nS 60-120-180-240bpm.zr', use_zarr_format=True) #krenta geras
+# f = z5py.File(r'C:\OpenGL\fentonGjOpenGL\data1.zr', use_zarr_format=True)
 
 def load_data():
     print(list(f.keys()))
-    u_dataset = f['u']
-    gj_dataset = f['gj']
+    # frames_count = u_dataset.attrs['frames_count'] 
+    # u_dataset = f['u']
+    # gj_dataset = f['gj']
+    # u = u_dataset[:frames_count]     
+    # gj = gj_dataset[:frames_count]     
 
-    frames_count = u_dataset.attrs['frames_count'] 
-    u = u_dataset[:frames_count]     
-    gj = gj_dataset[:frames_count]     
+    # u = f['u'][:f['u'].attrs['frames_count']]
+    # gj = f['gj'][:f['u'].attrs['frames_count']]
+    
+    u = f['u']
+    gj = f['gj']
+
+    frames_count = f['u'].attrs['frames_count']
+    dt_reg = 0.02
+    # dt_reg = f['u'].attrs['dt_reg']
+
     print('frames_count = ', frames_count)
     print(u.shape)
     print(gj.shape)
     # iterSelectSlider
-    return u, gj
+    return u, gj, frames_count, dt_reg
 
 
-global u, gj
-u,gj = load_data()
-frames_count = u.shape[0]
+global u, gj, frames_count
+u,gj,frames_count, dt_reg = load_data()
+
+# dt_reg = 2 # ms
+
+# frames_count = u.shape[0]
 
 # fig = fig.to_dict()
 
@@ -67,9 +81,9 @@ frames_count = u.shape[0]
 # plotly_pane.object = fig
 
 # iterSelectSlider = pn.widgets.FloatSlider(name='i_frame', start=0, end=frames_count-1, value=frames_count-1, step=1, value_throttled=0.1)
-tSelectSlider = pn.widgets.FloatSlider(name='t, ms', start=0, end=(frames_count-1)*0.2, value=(frames_count-1)*0.2, step=0.2, value_throttled=0.1)
-t_beginSelectSlider = pn.widgets.FloatSlider(name='t_bein, ms', start=0, end=(frames_count-1)*0.2, value=0, step=0.2, value_throttled=1)
-t_endSelectSlider = pn.widgets.FloatSlider(name='t_end, ms', start=0, end=(frames_count-1)*0.2, value=(frames_count-1)*0.2, step=0.2, value_throttled=1)
+tSelectSlider = pn.widgets.FloatSlider(name='t, ms', start=0, end=(frames_count-1)*dt_reg, value=(frames_count-1)*dt_reg, step=dt_reg, value_throttled=0.1)
+t_beginSelectSlider = pn.widgets.FloatSlider(name='t_bein, ms', start=0, end=(frames_count-1)*dt_reg, value=0, step=dt_reg, value_throttled=1)
+t_endSelectSlider = pn.widgets.FloatSlider(name='t_end, ms', start=0, end=(frames_count-1)*dt_reg, value=(frames_count-1)*dt_reg, step=dt_reg, value_throttled=1)
 refreshButton = pn.widgets.Button(name='Refresh')
 # p = pn.Pane.Ploty
 # param0 = ParamClass()
@@ -78,15 +92,15 @@ refreshButton = pn.widgets.Button(name='Refresh')
 
 @pn.depends(refreshButton.param.value, watch=True)
 def update_range(val):
-    global u, gj
+    global u, gj, frames_count
     u, gj = load_data()
     frames_count = u.shape[0]
     frames_count = gj.shape[0]
-    t_beginSelectSlider.end = frames_count*0.2
-    t_endSelectSlider.end = frames_count*0.2
-    t_endSelectSlider.value = frames_count*0.2
-    tSelectSlider.end = frames_count*0.2
-    tSelectSlider.value = frames_count*0.2
+    t_beginSelectSlider.end = frames_count*dt_reg
+    t_endSelectSlider.end = frames_count*dt_reg
+    t_endSelectSlider.value = frames_count*dt_reg
+    tSelectSlider.end = frames_count*dt_reg
+    tSelectSlider.value = frames_count*dt_reg
     # iterSelectSlider.value = 10
 
 @pn.depends(t_beginSelectSlider.param.value, watch=True)
@@ -98,16 +112,16 @@ def setEnd(v):
 
 # @pn.depends(tSelectSlider.param.end)
 # def voltagePlot(t):
-#     last_iter = int(t//0.2)
-#     fig = px.scatter(u[:last_iter,reg_y,reg_x],  title='Vm') # cia :u tik del to kad kitaip neupdeitina plot, # pagal plotly doc : with the downside that the resulting traces will need to be manually renamed via fig.data[<n>].name = "name"
+#     last_iter = int(t//dt_reg)
+#     fig = px.scatter(u[:frames_count-1last_iter,reg_y,reg_x],  title='Vm') # cia :u tik del to kad kitaip neupdeitina plot, # pagal plotly doc : with the downside that the resulting traces will need to be manually renamed via fig.data[<n>].name = "name"
 #     return fig
-@pn.depends(tSelectSlider.param.end)
+@pn.depends(tSelectSlider.param.end, watch=True)
 def voltagePlot(t):
-    last_iter = t//0.2
-    # fig = px.scatter(u[:v,reg_y,reg_x],  title='Vm') # cia :u tik del to kad kitaip neupdeitina plot, # pagal plotly doc : with the downside that the resulting traces will need to be manually renamed via fig.data[<n>].name = "name"
+    last_iter = t//dt_reg
+    # fig = px.scatter(u[:frames_count-1v,reg_y,reg_x],  title='Vm') # cia :u tik del to kad kitaip neupdeitina plot, # pagal plotly doc : with the downside that the resulting traces will need to be manually renamed via fig.data[<n>].name = "name"
     fig = go.Figure() # cia :u tik del to kad kitaip neupdeitina plot
     for i in np.arange(len(u_plot_cell_x)): 
-        fig.add_trace(go.Scattergl(x=np.multiply(np.arange(last_iter),0.2), y=u[:,u_plot_cell_y[i],u_plot_cell_x[i]], name=f"x {u_plot_cell_x[i]} y {u_plot_cell_y[i]}", mode = "lines+markers", hoverinfo='skip'))   
+        fig.add_trace(go.Scattergl(x=np.multiply(np.arange(last_iter),dt_reg), y=u[:frames_count-1,u_plot_cell_y[i],u_plot_cell_x[i]], name=f"x {u_plot_cell_x[i]} y {u_plot_cell_y[i]}", mode = "lines+markers", hoverinfo='skip'))   
     fig.update_xaxes(title='t,ms')
     fig.update_yaxes(title='mV')
     fig.layout.title = 'Vm plot'
@@ -119,23 +133,23 @@ def getCV():
     meas_y = cv_meas_cell_y
     # meas_x = [20,40] 
     # meas_y = [0,0]
-    pts_begin = (np.diff(u[:,meas_y[0],meas_x[0]]) > 0) & (u[:-1,meas_y[0],meas_x[0]] > -60) & (u[:-1,meas_y[0],meas_x[0]] < -30)
+    pts_begin = (np.diff(u[:frames_count-1,meas_y[0],meas_x[0]]) > 0) & (u[:frames_count-1-1,meas_y[0],meas_x[0]] > -60) & (u[:frames_count-1-1,meas_y[0],meas_x[0]] < -30)
     # pts_begin = (np.diff(df1[meas1]) > 0) & df1[meas1].gt(-60)[:-1] & df1[meas1].lt(-30)[:-1] # butini (), bool[] - kai diff(isvestine) > 0 ir pati reiksme > 0mV (kad nufiltruoti pasvyravimus)
-    pts_end =  (np.diff(u[:,meas_y[1],meas_x[1]]) > 0) & (u[:-1,meas_y[1],meas_x[1]] > -60) & (u[:-1,meas_y[1],meas_x[1]] < -30)
+    pts_end =  (np.diff(u[:frames_count-1,meas_y[1],meas_x[1]]) > 0) & (u[:frames_count-1-1,meas_y[1],meas_x[1]] > -60) & (u[:frames_count-1-1,meas_y[1],meas_x[1]] < -30)
     # pts_end = (np.diff(df1[meas2]) > 0) & df1[meas2].gt(-60)[:-1] & df1[meas2].lt(-30)[:-1] # butini ()
     peaks_begin, _ = find_peaks(pts_begin) # grazina index
     peaks_end, _ = find_peaks(pts_end)
     # print(df1["t"][peaks_begin])
     # print(df1["t"][peaks_end].values-df1["t"][peaks_begin].values)
     # cv = (1*100e-6)/((peaks_end - peaks_begin[:len(peaks_end)])/1000) * 100 # *100 m/s->cm/s
-    t1 = peaks_begin*0.2
-    t2 = peaks_end*0.2
+    t1 = peaks_begin*dt_reg
+    t2 = peaks_end*dt_reg
     cells_count = meas_x[1] - meas_x[0]
     cv = (cells_count*100e-6) / ( (t2 - t1[:len(t2)]) / 1000) * 100 # / 1000 s -> ms, *100 m/s->cm/s
     # t_delay = (df1["t"][peaks_end].values - df1["t"][peaks_begin][:len(peaks_end)].values)# *100 m/s->cm/s
     if len(peaks_begin) - len(peaks_end) > 1:
         print('Some waves were blocked and didnt reach end, require manual inspection of CV plot!!')
-    # last_iter = t//0.2
+    # last_iter = t//dt_reg
     t_all = t2    
     return cv, t_all
 
@@ -145,23 +159,23 @@ def cvPlot(t):
     # meas_y = cv_meas_cell_y
     # # meas_x = [20,40] 
     # # meas_y = [0,0]
-    # pts_begin = (np.diff(u[:,meas_y[0],meas_x[0]]) > 0) & (u[:-1,meas_y[0],meas_x[0]] > -60) & (u[:-1,meas_y[0],meas_x[0]] < -30)
+    # pts_begin = (np.diff(u[:frames_count-1,meas_y[0],meas_x[0]]) > 0) & (u[:frames_count-1-1,meas_y[0],meas_x[0]] > -60) & (u[:frames_count-1-1,meas_y[0],meas_x[0]] < -30)
     # # pts_begin = (np.diff(df1[meas1]) > 0) & df1[meas1].gt(-60)[:-1] & df1[meas1].lt(-30)[:-1] # butini (), bool[] - kai diff(isvestine) > 0 ir pati reiksme > 0mV (kad nufiltruoti pasvyravimus)
-    # pts_end =  (np.diff(u[:,meas_y[1],meas_x[1]]) > 0) & (u[:-1,meas_y[1],meas_x[1]] > -60) & (u[:-1,meas_y[1],meas_x[1]] < -30)
+    # pts_end =  (np.diff(u[:frames_count-1,meas_y[1],meas_x[1]]) > 0) & (u[:frames_count-1-1,meas_y[1],meas_x[1]] > -60) & (u[:frames_count-1-1,meas_y[1],meas_x[1]] < -30)
     # # pts_end = (np.diff(df1[meas2]) > 0) & df1[meas2].gt(-60)[:-1] & df1[meas2].lt(-30)[:-1] # butini ()
     # peaks_begin, _ = find_peaks(pts_begin) # grazina index
     # peaks_end, _ = find_peaks(pts_end)
     # # print(df1["t"][peaks_begin])
     # # print(df1["t"][peaks_end].values-df1["t"][peaks_begin].values)
     # # cv = (1*100e-6)/((peaks_end - peaks_begin[:len(peaks_end)])/1000) * 100 # *100 m/s->cm/s
-    # t2 = peaks_end*0.2
-    # t1 = peaks_begin*0.2
+    # t2 = peaks_end*dt_reg
+    # t1 = peaks_begin*dt_reg
     # cells_count = meas_x[1] - meas_x[0]
     # cv = (cells_count*100e-6) / ( (t2 - t1[:len(t2)]) / 1000) * 100 # / 1000 s -> ms, *100 m/s->cm/s
     # # t_delay = (df1["t"][peaks_end].values - df1["t"][peaks_begin][:len(peaks_end)].values)# *100 m/s->cm/s
     # if len(peaks_begin) - len(peaks_end) > 1:
     #     print('Some waves were blocked and didnt reach end, require manual inspection of CV plot!!')
-    # last_iter = t//0.2
+    # last_iter = t//dt_reg
     # t_all = t2
     cv, t_all = getCV()
     fig = px.scatter(x=t_all,y=cv, title=f'CV at x: {cv_meas_cell_x}, y: {cv_meas_cell_y}')
@@ -171,11 +185,12 @@ def cvPlot(t):
 
 @pn.depends(tSelectSlider.param.end)
 def gjPlot(t):
-    last_iter = t//0.2
+    # last_iter = t//dt_reg
     sel = 0 # W
     fig = go.Figure() # cia :u tik del to kad kitaip neupdeitina plot
     for i in np.arange(len(gj_plot_cell_x)): 
-        fig.add_trace(go.Scattergl(x=np.multiply(np.arange(last_iter),0.2), y=gj[:,gj_plot_cell_y[i],gj_plot_cell_x[i],sel], name=f"x {gj_plot_cell_x[i]} y {gj_plot_cell_y[i]}", mode = "lines+markers",hoverinfo='skip',))   
+        fig.add_trace(go.Scattergl(x=np.multiply(np.arange(frames_count),dt_reg), y=gj[:frames_count-1,gj_plot_cell_y[i],gj_plot_cell_x[i],sel], name=f"x {gj_plot_cell_x[i]} y {gj_plot_cell_y[i]}", mode = "lines+markers",hoverinfo='skip',))   
+        # fig.add_trace(go.Scattergl(x=[1,2], y=[1,2], name=f"x {gj_plot_cell_x[i]} y {gj_plot_cell_y[i]}", mode = "lines+markers",hoverinfo='skip',))   
     fig.update_xaxes(title='t, ms')
     fig.update_yaxes(title='gj, S')
     fig.layout.title = f'gj plot at x: {gj_plot_cell_x}, y: {gj_plot_cell_y}'
@@ -184,22 +199,22 @@ def gjPlot(t):
 
 @pn.depends(tSelectSlider.param.value)
 def voltageMap(t):
-    last_iter = int(t//0.2)
+    last_iter = int(t//dt_reg)
     fig = px.imshow(u[last_iter], width=1500, zmin=-75, zmax=10, title='Vm map')
     fig.add_trace(go.Scatter(x=gj_plot_cell_x, y=gj_plot_cell_y, mode = "markers", hoverinfo='skip') )
     return fig#.to_dict()
 
 @pn.depends(tSelectSlider.param.value)
 def gjMap(t):
-    last_iter = int(t//0.2)
+    last_iter = int(t//dt_reg)
     fig = px.imshow(gj[last_iter,:,:,0], width=1500, zmin=gj_min, zmax=gj_max, color_continuous_scale='Turbo' , title='gj map')
     # fig = px.imshow(gj[last_iter,:,:,0], width=1500, title='gj map')
     fig.add_trace(go.Scattergl(x=gj_plot_cell_x, y=gj_plot_cell_y, mode = "markers", hoverinfo='skip') )    
     return fig
 
 @pn.depends(tSelectSlider.param.value)
-def uContour(t):
-    i = int(t//0.2)
+def voltageContour(t):
+    i = int(t//dt_reg)
     size_y = u.shape[1] #y
     size_x = u.shape[2] #x
     ar = np.empty((size_y*2-1,size_x*2))
@@ -231,17 +246,17 @@ def uContour(t):
     fig.update_layout(
         # autosize=True,
         title='Vm contour',
-        width=1500,
-        height=300,
+        # width=1500,
+        # height=300,
     )
 
     fig.add_trace(go.Scattergl(x=gj_plot_cell_x, y=gj_plot_cell_y, mode = "markers", hoverinfo='skip') )
 
     return fig
 
-plotly_pane = pn.Column(voltagePlot, pn.Row(cvPlot, gjPlot), refreshButton,tSelectSlider, t_beginSelectSlider, t_endSelectSlider, gjMap, voltageMap)
+plotly_pane = pn.Column(cvPlot, refreshButton,tSelectSlider, t_beginSelectSlider, t_endSelectSlider)
 # plotly_pane = pn.Column(voltagePlot, cvPlot, gjPlot, refreshButton,tSelectSlider, t_beginSelectSlider, t_endSelectSlider, gjMap, voltageMap)
-# plotly_pane = pn.Column(voltagePlot, gjPlot, refreshButton,tSelectSlider, gjMap, voltageMap, uContour)
+# plotly_pane = pn.Column(voltagePlot, gjPlot, refreshButton,tSelectSlider, gjMap, voltageMap, voltageContour)
 
 
 # BOKEH server
@@ -270,17 +285,17 @@ bokeh_srv = ui.show(threaded=True)
 def save_CV_t():
     meas_x = [20,40] 
     meas_y = [0,0]
-    pts_begin = (np.diff(u[:,meas_y[0],meas_x[0]]) > 0) & (u[:-1,meas_y[0],meas_x[0]] > -60) & (u[:-1,meas_y[0],meas_x[0]] < -30)
+    pts_begin = (np.diff(u[:frames_count-1,meas_y[0],meas_x[0]]) > 0) & (u[:frames_count-1-1,meas_y[0],meas_x[0]] > -60) & (u[:frames_count-1-1,meas_y[0],meas_x[0]] < -30)
     # pts_begin = (np.diff(df1[meas1]) > 0) & df1[meas1].gt(-60)[:-1] & df1[meas1].lt(-30)[:-1] # butini (), bool[] - kai diff(isvestine) > 0 ir pati reiksme > 0mV (kad nufiltruoti pasvyravimus)
-    pts_end =  (np.diff(u[:,meas_y[1],meas_x[1]]) > 0) & (u[:-1,meas_y[1],meas_x[1]] > -60) & (u[:-1,meas_y[1],meas_x[1]] < -30)
+    pts_end =  (np.diff(u[:frames_count-1,meas_y[1],meas_x[1]]) > 0) & (u[:frames_count-1-1,meas_y[1],meas_x[1]] > -60) & (u[:frames_count-1-1,meas_y[1],meas_x[1]] < -30)
     # pts_end = (np.diff(df1[meas2]) > 0) & df1[meas2].gt(-60)[:-1] & df1[meas2].lt(-30)[:-1] # butini ()
     peaks_begin, _ = find_peaks(pts_begin) # grazina index
     peaks_end, _ = find_peaks(pts_end)
     # print(df1["t"][peaks_begin])
     # print(df1["t"][peaks_end].values-df1["t"][peaks_begin].values)
     # cv = (1*100e-6)/((peaks_end - peaks_begin[:len(peaks_end)])/1000) * 100 # *100 m/s->cm/s
-    t1 = peaks_begin*0.2
-    t2 = peaks_end*0.2
+    t1 = peaks_begin*dt_reg
+    t2 = peaks_end*dt_reg
     cells_count = meas_x[1] - meas_x[0]
     cv = (cells_count*100e-6) / ( (t2 - t1[:len(t2)]) / 1000) * 100 # / 1000 s -> ms, *100 m/s->cm/s
     # t_delay = (df1["t"][peaks_end].values - df1["t"][peaks_begin][:len(peaks_end)].values)# *100 m/s->cm/s
@@ -300,7 +315,7 @@ save_CV_t()
 def save_gj_t():
     %cd C:\OpenGL\fentonGjOpenGL
     frames_count = u.shape[0]
-    t_ = np.multiply(np.arange(frames_count),0.2)[::1000]
+    t_ = np.multiply(np.arange(frames_count),dt_reg)[::1000]
     gj_ = gj[::1000,0,22,0]
     ar = np.ones((len(t_), 2))
     ar[:,0] = t_
