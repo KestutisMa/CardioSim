@@ -1,4 +1,4 @@
-# fenton4smOpenGL
+# CGJ (cardiac gap junction) simulator
 
 This repository contains C++ code for simulation of two dimensional cardiac tissue electrophysiology. Electrical excitation is represented by (Fenton-Karma 1998) equations and conductance - by four-state model of gap junction channel voltage gating (Snipas et al. 2020).
 
