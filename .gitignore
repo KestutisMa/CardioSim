@@ -3,6 +3,8 @@ build/
 bkp/
 trink/
 results/
+kiti/
+fenton_venv/
 *.dll
 *.csv
 fentonControl_pb2*

@@ -537,19 +537,33 @@ float mc4sm(int gj_sel, float Vj, float dt, float limit) {
 void main() {
   if (x >= 0 && x < size.x && y >= 0 && y < size.y) {
     //  if (x > 0 && y < size.x-1 && y > 0 && y < size.y-1) {
-    //#parameters
+    
+    // //#parameters - drift - stable rotor par: https://github.com/ashikagah/Fenton-Karma
+    // float tvp = 3.33f;
+    // float tv1m = 9.0f;
+    // float tv2m = 8.0f;
+    // float twp = 250.0f;
+    // float twm = 60.f;
+    // float td = 0.395; 
+    // float to = 9.0f;
+    // float tr = 33.3f;
+    // float tsi = 29.0f;
+    // float xk = 15.0f;
+    // float ucsi = 0.5f;    
+
+    // parameters - lengva sukelti fibrl., unstable rotor, fenton 1988 original par., resitution close to 1 - vyksta nutrukimas po 1 apsisukimo (scalopping, pagal Fenton 2002)
     float tvp = 3.33f;
     float tv1m = 19.6f;
     float tv2m = 1250.f;
     float twp = 870.0f;
     float twm = 41.0f;
-    float td = 0.25; // 0.25 orig; mazesnis greitina Na srove ir didina Vj, bet
-                     // mazina uzlaikyma
-    float to = 12.5f; // 12.5
-    float tr = 33.3f; // 33.3
-    float tsi = 30.0f;
+    float td = 0.25f; // 0.25 orig; mazesnis greitina Na srove ir didina Vj, bet mazina uzlaikyma
+    float to = 12.5f;
+    float tr = 33.3f;
+    float tsi = 30.0f;// 30.0
     float xk = 10.0f;
     float ucsi = 0.85f;
+
     float uc = 0.13f;
     float uv = 0.04f;
     float Vfi = 15e-3f; //#nernst potential of fast gate
@@ -755,12 +769,12 @@ void main() {
     // }
 
     
-    if (gjModelEnabled
+    if (//gjModelEnabled &&// if ! is present - test without model
     // if (false
           //harcoded: jei nelaidzios PJ tai neperskaiciuojam
-         && gj[y * size.x * 3 + x * 3 + 0] > 1e-25f
-         && gj[y * size.x * 3 + x * 3 + 1] > 1e-25f
-         && gj[y * size.x * 3 + x * 3 + 2] > 1e-25f        
+         gj[y * size.x * 3 + x * 3 + 0] > 1e-15f
+         && gj[y * size.x * 3 + x * 3 + 1] > 1e-15f
+         && gj[y * size.x * 3 + x * 3 + 2] > 1e-15f        
     )
     { //
       int skip = 10; // iter skip factor for speeup

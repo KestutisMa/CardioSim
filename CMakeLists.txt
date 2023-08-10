@@ -1,5 +1,10 @@
-# list(APPEND CMAKE_PREFIX_PATH "C:/Miniconda3/envs/py39")
-message("**********************\ncmake PrefixPath\n*****************" ${CMAKE_PREFIX_PATH})
+IF (WIN32)
+  list(APPEND CMAKE_PREFIX_PATH "C:/Miniconda3/envs/py38") #butina kad nekonfliktuotu su system libraries
+ELSE()
+  # list(APPEND CMAKE_PREFIX_PATH "/opt/miniconda3/") #butina kad nekonfliktuotu su system libraries
+  list(APPEND CMAKE_PREFIX_PATH "/home/lab/.conda/envs/py39/") #butina kad nekonfliktuotu su system libraries
+ENDIF()
+message("****\ncmake PrefixPath = " ${CMAKE_PREFIX_PATH})
 
 cmake_minimum_required(VERSION 3.0.0)
 project(fentonGjOpenGL VERSION 0.1.0)
@@ -8,6 +13,8 @@ project(fentonGjOpenGL VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
 
 # if(MSVC)
 #   set(CMAKE_EXE_LINKER_FLAGS
@@ -23,8 +30,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # set(FETCHCONTENT_QUIET OFF)
 # FetchContent_MakeAvailable(gRPC)
 
+option(WITH_BLOSC "Build with blosc compression" OFF)
+
 # find_package(absl CONFIG REQUIRED)
 find_package(gRPC REQUIRED)
+find_package(OpenMP REQUIRED)
+# find_package(BLOSC REQUIRED)
+find_package(glfw3 REQUIRED)
+find_package(GLEW REQUIRED)
+find_package(Protobuf REQUIRED)
 # find_package(gRPC CONFIG REQUIRED)
 # FIND_PACKAGE(Boost REQUIRED)
 # find_package(PythonLibs 3.7 REQUIRED)
@@ -37,24 +51,28 @@ find_package(nlohmann_json CONFIG REQUIRED)
 # message("**********************\n json \n*****************" ${xtensor_INCLUDE_DIRS})
 
 # include(CTest)
-include_directories(C:/OpenGL/glfw-3.3.2.bin.WIN64/include/
- C:/OpenGL/glew-2.1.0-win32/glew-2.1.0/include/
-#  C:/Miniconda3/pkgs/z5py-2.0.11-py38h6790dec_0/Library/include
-#  C:/Miniconda3/pkgs/xtensor-0.24.0-h5362a0b_0/Library/include
-#  C:/OpenGL/fentonGjOpenGL/vcpkg/packages/python3_x64-windows/include/python3.7
-#  ${xtensor_INCLUDE_DIRS}
-#  C:/Miniconda3/envs/py38/Library/include/nlohmann
-# ${nlohmann_INCLUDE_DIRS}
- ${PYTHON_INCLUDE_DIRS}
- ${Protobuf_INCLUDE_DIRS}
- ${CMAKE_CURRENT_BINARY_DIR}
-#  ${Boost_INCLUDE_DIR}
-#  C:/OpenGL/fentonGjOpenGL/protos/
- )
-link_directories(C:/OpenGL/glfw-3.3.2.bin.WIN64/lib-vc2019/
+IF (WIN32)
+  include_directories(C:/OpenGL/glfw-3.3.2.bin.WIN64/include/
+  C:/OpenGL/glew-2.1.0-win32/glew-2.1.0/include/
+  ${PYTHON_INCLUDE_DIRS}
+  ${Protobuf_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_BINARY_DIR}
+  )
+ELSE()
+  include_directories(
+  ${PYTHON_INCLUDE_DIRS}
+  # ${Protobuf_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_BINARY_DIR}
+  )
+ENDIF()
 
+IF (WIN32)
+  link_directories(C:/OpenGL/glfw-3.3.2.bin.WIN64/lib-vc2019/
     C:/OpenGL/glew-2.1.0-win32/glew-2.1.0/lib/Release/x64/)
-# enable_testing(C:/OpenGL/glew-2.1.0-win32/glew-2.1.0/)
+ELSE()
+  # link_directories(/opt/miniconda3/lib)
+  link_directories(/home/lab/.conda/envs/py39/lib)
+ENDIF()
 
 find_program(_PROTOBUF_PROTOC protoc)
 find_program(_GRPC_CPP_PLUGIN_EXECUTABLE grpc_cpp_plugin)
@@ -76,15 +94,22 @@ add_custom_command(
         --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
         -I "${hw_proto_path}"
         # --proto_path="C:/vcpkg/installed/x64-windows/include"
-        --proto_path="C:/Miniconda3/envs/py38/Library/include/"
+        # --proto_path="C:/Miniconda3/envs/py38/Library/include/"
+        --proto_path="/opt/miniconda3/bin/protoc"
         --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
         "${hw_proto}"
       DEPENDS "${hw_proto}")
-add_executable(fentonGjOpenGL main.cpp shader.cpp ${hw_proto_srcs} ${hw_grpc_srcs}) # socketsServerExample.cpp)
+add_executable(fentonGjOpenGL main.cpp shader.cpp read_ppm.hpp ${hw_proto_srcs} ${hw_grpc_srcs}) # socketsServerExample.cpp)
 # add_executable(helloWorldServer HelloWorld_Server/HelloWorld_Server.cpp ${hw_proto_srcs} ${hw_grpc_srcs}) # socketsServerExample.cpp)
 # add_executable(helloWorldClient HelloWorld_Client/HelloWorld_Client.cpp ${hw_proto_srcs} ${hw_grpc_srcs}) # socketsServerExample.cpp)
-add_executable(mc4sm mc4sm.cpp matrix_exponential.cpp r8lib.cpp) # socketsServerExample.cpp)
-target_link_libraries(fentonGjOpenGL PRIVATE glfw3dll glew32 opengl32 Ws2_32 gRPC::grpc++ xtensor nlohmann_json::nlohmann_json )# ${Protobuf_LIBRARIES})      
+
+# add_executable(mc4sm mc4sm.cpp matrix_exponential.cpp r8lib.cpp) # socketsServerExample.cpp)
+IF (WIN32)
+  target_link_libraries(fentonGjOpenGL PRIVATE glfw3dll glew32 opengl32 Ws2_32 gRPC::grpc++ xtensor nlohmann_json::nlohmann_json )# ${Protobuf_LIBRARIES})        
+ELSE()
+  target_link_libraries(fentonGjOpenGL PRIVATE blosc glfw GLEW GL gRPC::grpc++ xtensor nlohmann_json::nlohmann_json OpenMP::OpenMP_CXX)# ${Protobuf_LIBRARIES})      
+ENDIF()
+
 #Mano Boost lib
 #reikia:
 # setlocal

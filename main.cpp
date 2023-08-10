@@ -1,4 +1,9 @@
-﻿#include <filesystem> // to delete previous zarr files
+﻿// #define WITH_ZLIB
+#define WITH_BLOSC
+
+#include "read_ppm.hpp"
+
+#include <filesystem> // to delete previous zarr files
 
 #include "nlohmann/json.hpp"
 #include "xtensor/xarray.hpp"
@@ -13,6 +18,7 @@
 // factory functions to create files, groups and datasets
 #include "z5/factory.hxx"
 // handles for z5 filesystem objects
+#include "z5/filesystem/metadata.hxx"
 #include "z5/filesystem/handle.hxx"
 // io for xtensor multi-arrays
 #include "z5/multiarray/xtensor_access.hxx"
@@ -47,7 +53,7 @@ using helloworld::VmReply;
 #include <iostream>
 #include <fstream>
 #include <time.h>
-#include <Windows.h>
+// #include <Windows.h>
 #include <thread>
 #include <queue>
 #include <mutex>
@@ -63,11 +69,12 @@ GLFWwindow *window;
 #include "shader.hpp"
 // using namespace std;
 
-void mouse_button_callback(GLFWwindow *window, int button, int action, int mods);
+static void mouse_button_callback(GLFWwindow *window, int button, int action, int mods);
 void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods);
 void RunServer(std::unique_ptr<grpc::Server> *serverPtr);
 void APIENTRY glDebugOutput(GLenum source, GLenum type, unsigned int id, GLenum severity,
 							GLsizei length, const char *message, const void *userParam);
+						
 
 bool lbutton_down = false;
 bool enableGjModel = true;
@@ -84,7 +91,7 @@ std::mutex mtx;
 std::unique_ptr<grpc::Server> *serverPtr;
 
 // grpc control interface
-bool pause = false;
+bool paused = false;
 
 clock_t t_start, t_end;
 
@@ -92,17 +99,36 @@ using namespace std;
 
 queue<int> queueCmd;
 queue<float *> queueReply; // kai float
-// queue<double *> queueReply; // kai double
+// queue<double *> queueReply; // kai double	
 
-const size_t sizeX = 50; // lasteliu turi buti lyginis skaicius, kad veiktu periodic boudaries
-const size_t sizeY = 2;
+enum LoadFrom { file, manual};
+// LoadFrom loadFrom = LoadFrom::manual;
+LoadFrom loadFrom = LoadFrom::file;
+// #define PPM_FILE R"(/home/lab/Pictures/trink.ppm)")
+// #define PPM_FILE R"(/home/lab/Pictures/vct_773px.ppm)")
+// #define PPM_FILE R"(/home/lab/Pictures/tankus_500x250.ppm)")
+// #define PPM_FILE R"(/home/lab/Pictures/test_kliutis_1000x1000.ppm)") // veikia ||
+// #define PPM_FILE R"(/home/lab/Pictures/real_vct_773px.ppm)") // pirmas real bandymas
+// #define PPM_FILE R"(/home/lab/Pictures/real_2_vct_477x241px.ppm)") // pirmas real bandymas, veikia - fibril block
+// #define PPM_FILE R"(/home/lab/Documents/10 imgs/10s.ppm)") // 10 bandymu (2022-06-01)
+// #define PPM_FILE R"(/home/lab/Pictures/real 4 500x250 fibril.ppm)") // bandymas - fibril block
+// #define PPM_FILE R"(/home/lab/Pictures/real 3 500x250.ppm)") // pirmas real bandymas
+// #define PPM_FILE R"(/home/lab/Pictures/real 3 500x250 drift.ppm)") // gaunas drift
+// #define PPM_FILE R"(/home/lab/Pictures/real 3 500x250 drift_test_all4345_trink.ppm)") // gaunas drift - all 4345 test
+// const size_t sizeX = 477; // lasteliu turi buti lyginis skaicius, kad veiktu periodic boudaries
+// const size_t sizeY = 241;
+
+const int debugLevel = 0;
+
+size_t sizeX = 500; // lasteliu turi buti lyginis skaicius, kad veiktu periodic boudaries
+size_t sizeY = 250;
 const size_t workGroupSizeX = 32; //32
 const size_t workGroupSizeY = 32; //32
-const size_t itersInFrame = 1;  // dt_reg = dt_sim * itersInFrame
+const size_t itersInFrame = 50;  // dt_reg = dt_sim * itersInFrame
 // **** Simulacijos trukme
 // const float t_max = 160000.f; //ms
-const float t_max = 400000.f; //ms
-const size_t frame_chunk_size = 100; // kiek i_frame itaraciju vienam chunk
+float t_max = 20050.f; //cv meas 40000.f; //ms
+const size_t frame_chunk_size = 50; // cv meas 500; // kiek i_frame itaraciju vienam chunk
 // Open a window and create its OpenGL context
 int scale = 600;
 int width = scale * sizeX / sizeY; //*2 kai 2 2d grafikai
@@ -133,16 +159,51 @@ GLuint ssbo_u, ssbo_v, ssbo_w, ssbo_J_ion, ssbo_J_gj, ssbo_u_reg, ssbo_gj, ssbo_
 
 std::mt19937 rng;
 
-int main(void)
+int main(int argc, char *argv[])
 {
 	rng.seed(123); // for initializing heterotypic GJs distribution in tissue
 	std::uniform_int_distribution<uint32_t> uint_dist100(0,100);
 
-	cout << "Starting..\n";
+	cout << "Starting fentonKarma..\n";
+	if (argc < 4 + 1) {
+		printf("Use syntax: fentonOpenGL <infile.ppm> <outZarr.zr> <time> <gj_mode(4sm/const)>\n");
+		return 0;
+	}
+	char *ppm_file = argv[1];
+	char *outZarrName = argv[2];
+	int t_max = stoi(argv[3]) + itersInFrame*par.dt; // +.. del to kad baigtu lygiai ties t_max (gaunasi [0...t_max])
+	enableGjModel = strcmp(argv[4],"4sm") ? false : true;
 
-	HWND consoleWindow = GetConsoleWindow();
+	printf("argc = %d, ", argc);
+	printf("ppm_file = %s, ", argv[1]);
+	printf("outZarrDir = %s, ", argv[2]);
+	printf("t_max = %s, ", argv[3]);
+	printf("gj_mode = %s\n", argv[4]);
 
-	SetWindowPos(consoleWindow, 0, 0, 500, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+	unsigned int imageSizeX = 0, imageSizeY = 0;
+	std::vector<RGB> image;
+	if (loadFrom == file) {
+		readPPM(image, imageSizeX, imageSizeY, std::string(ppm_file));
+		// for (int i=0; i < imageSizeX*imageSizeY; i++) {
+		//     std::cout << (int)image[i].R << " ";
+		// }    	
+		sizeX = imageSizeX;
+		sizeY = imageSizeY;
+		// if (imageSizeX != sizeX || imageSizeY != sizeY) {
+		// 	cerr << "\\nerror form main(), after readPPM(): imageSizeX != sizeX || imageSizeY != sizeY\n"
+		// 		<< "\nexiting..\n";
+		// 	return -1;
+		// }
+		printf("file loaded = %s\n", ppm_file);
+	}
+
+	printf("sizeX = %d\n", sizeX);
+	printf("sizeY = %d\n", sizeY);
+
+	// TODO: only for windows
+	// HWND consoleWindow = GetConsoleWindow();
+
+	// SetWindowPos(consoleWindow, 0, 0, 500, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
 
 	std::thread serverThread(RunServer, serverPtr); //TODO: clean server shutdown
 
@@ -173,7 +234,8 @@ int main(void)
 	glfwSetWindowPos(window, 0, 0);
 	glfwMakeContextCurrent(window);
 
-	cout << "\nGPU: " << glGetString(GL_VENDOR) << ", " << glGetString(GL_RENDERER) << endl;
+	if (debugLevel > 0)
+		cout << "\nGPU: " << glGetString(GL_VENDOR) << ", " << glGetString(GL_RENDERER) << endl;
 
 	// Initialize GLEW
 	glewExperimental = true; // Needed for core profile
@@ -190,7 +252,8 @@ int main(void)
 	if (flags & GL_CONTEXT_FLAG_DEBUG_BIT)
 	{
 		// initialize debug output
-		cout << "Initialize debug output.\n";
+		if (debugLevel > 0)
+			cout << "Initialize debug output.\n";
 		glEnable(GL_DEBUG_OUTPUT);
 		glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 		glDebugMessageCallback(glDebugOutput, nullptr);
@@ -199,7 +262,8 @@ int main(void)
 							  GL_DEBUG_TYPE_ERROR,
 							  GL_DEBUG_SEVERITY_HIGH,
 							  0, nullptr, GL_TRUE);
-		cout << "Initialize debug output. Done.\n";
+		if (debugLevel > 0)							  	
+			cout << "Initialize debug output. Done.\n";
 	}
 
 	glfwSetMouseButtonCallback(window, mouse_button_callback);
@@ -213,20 +277,65 @@ int main(void)
 
 	// Create and compile our GLSL program from the shaders
 	//ShProgs shIDs = LoadShaders("SimpleVertexShader.vert", "SimpleFragmentShader.frag", "compShader1.comp", "compShader2.comp");
+	#ifdef _WIN32
 	GLuint kernel1 = LoadComputeShader("C:\\OpenGL\\fentonGjOpenGL\\compShader1.comp", workGroupSizeX, workGroupSizeY);
 	GLuint kernel2 = LoadComputeShader("C:/OpenGL/fentonGjOpenGL/compShader2.comp", workGroupSizeX, workGroupSizeY);
 	GLuint vertFragShadersID = LoadVertexFragmentShaders("C:/OpenGL/fentonGjOpenGL/SimpleVertexShader.vert", "C:/OpenGL/fentonGjOpenGL/SimpleFragmentShader.frag");
 	GLuint line2DvertFragShadersID = LoadVertexFragmentShaders("C:/OpenGL/fentonGjOpenGL/linePlot.vert", "C:/OpenGL/fentonGjOpenGL/linePlot.frag");
+	#else
+	GLuint kernel1 = LoadComputeShader("/home/lab/Documents/fentonOpenGL/compShader1.comp", workGroupSizeX, workGroupSizeY);
+	GLuint kernel2 = LoadComputeShader("/home/lab/Documents/fentonOpenGL/compShader2.comp", workGroupSizeX, workGroupSizeY);	
+	GLuint vertFragShadersID = LoadVertexFragmentShaders("/home/lab/Documents/fentonOpenGL/SimpleVertexShader.vert", "/home/lab/Documents/fentonOpenGL/SimpleFragmentShader.frag");
+	GLuint line2DvertFragShadersID = LoadVertexFragmentShaders("/home/lab/Documents/fentonOpenGL/linePlot.vert", "/home/lab/Documents/fentonOpenGL/linePlot.frag");
+	#endif
 
+	// initial conditions
 	for (int x = 0; x < sizeX; x++)
 		for (int y = 0; y < sizeY; y++)
 		{
-			ssb_u_host[y * sizeX + x] = 0;	// normal
+			// // real 3 bandymai
+			// const float offset_x = 0;
+			// const float offset_y = 0.;
+			// ssb_u_host[y * sizeX + x] = x > 200-offset_x && x < 360-offset_x && y > 0 - offset_y && y < 250 - offset_y ? 0.01 : 0.;	// normal
+			// ssb_v_host[y * sizeX + x] = x > 200-offset_x && x < 360-offset_x && y > 0 - offset_y && y < 250 - offset_y ? 0.01 : 1.; //0.999970794;
+			// ssb_w_host[y * sizeX + x] = x > 200-offset_x && x < 360-offset_x && y > 0 - offset_y && y < 250 - offset_y ? 0.01 : 1.; //0.999938905;
+
+			// ssb_u_host[y * sizeX + x] = x > 340-offset_x && x < 360-offset_x && y > 20 - offset_y && y < 250 - offset_y ? 1. : 0.;	// pridedam suzadinama zona ant virsaus
+			
+			// real 2 bandymas veikia
+			// ssb_u_host[y * sizeX + x] = x > 300 && x < 330 && y > 140 && y < 210 ? 1. : 0.;	// normal
+			// ssb_v_host[y * sizeX + x] = x > 240 && x < 320 && y > 40 && y < 210 ? 0.01 : 1.; //0.999970794;
+			// ssb_w_host[y * sizeX + x] = x > 240 && x < 320 && y > 40 && y < 210 ? 0.01 : 1.; //0.999938905;
+			
+			// // // // fibril 477x241
+			// bool zona1 = x > 300 && x < 330 && y > 140 && y < 210; // suzadinimo
+			// bool zona2 = x < 300; // staciakampis aplink
+			// ssb_u_host[y * sizeX + x] = zona1 ? 1. : 0.;	// normal
+			// ssb_v_host[y * sizeX + x] = zona2 && !zona1  ? 0.01 : .99; //0.999970794;
+			// ssb_w_host[y * sizeX + x] = zona2 && !zona1  ? 0.01 : .99; //0.999938905;
+			
+			// // real 1 bandymas
+			// ssb_u_host[y * sizeX + x] = x > 515 && x < 575 && y > 605 && y < 610 ? 1. : 0.;	// normal
+			// ssb_v_host[y * sizeX + x] = x > 515 && x < 575 && y > 595 && y < 605 ? 0.01 : 1.; //0.999970794;
+			// ssb_w_host[y * sizeX + x] = x > 515 && x < 575 && y > 595 && y < 605 ? 0.01 : 1.; //0.999938905;
+			
+			// veikia || formos
+			// ssb_u_host[y * sizeX + x] = x > 180 && x < 200 && y > 270 && y < 300 ? 1. : 0.;	// normal
+			// ssb_v_host[y * sizeX + x] = x > 170 && x < 180 && y > 270 && y < 300 ? 0.01 : 1.; //0.999970794;
+			// ssb_w_host[y * sizeX + x] = x > 170 && x < 180 && y > 270 && y < 300 ? 0.01 : 1.; //0.999938905;
+
+			// trink
+			// ssb_u_host[y * sizeX + x] = x < 40 && y > 400 ? 1. : 0.;	// normal
+			// ssb_v_host[y * sizeX + x] = x < 400 && y < 450 ? 0.01 : 1.; //0.999970794;
+			// ssb_w_host[y * sizeX + x] = x < 400 && y < 450 ? 0.01 : 1.; //0.999938905;
+
+			// normal
+			ssb_u_host[y * sizeX + x] = 0; // 
 			ssb_v_host[y * sizeX + x] = 1.; //0.999970794;
 			ssb_w_host[y * sizeX + x] = 1.; //0.999938905;
-			// ssb_u_host[y * sizeX + x] = x <= 128 && y <= 64 - 8 ? 1. : 0; // rotor bandymai
-			// ssb_v_host[y * sizeX + x] = x <= 128 ? 0. : 1.; //0.999970794;
-			// ssb_w_host[y * sizeX + x] = x <= 128 ? 0. : 1.; //0.999938905;
+
+			// ssb_u_host[y * sizeX + x] = x > 10 && x < 20 ? 1. : 0.; // rotor bandymai
+
 			ssb_J_ion_host[y * sizeX + x] = 0;
 			ssb_J_gj_host[y * sizeX * 3 + x * 3] = 0.f;		//W
 			ssb_J_gj_host[y * sizeX * 3 + x * 3 + 1] = 0.f; //NW
@@ -246,10 +355,10 @@ int main(void)
 			// float g_both = 50e-9f;
 			// float g_both = 50e-9f;
 			// float g_both = 8e-9f;
-			float A = 2.f; //anisotropy
+			float A = 1.f; //anisotropy 1 vs 2// paskutinai exp - 1
 			
 			float gmax43 = 300e-9f; //600 300
-			float gmax4543 = 46e-9f;//64 46
+			float gmax4543 = 90e-9f;//47 - kai linija 64 46 50-gaunas // paskutiniai exp - 100
 			// float gmax43 = 300e-9f; // susidaro prie 75-120-240 pulso
 			// float gmax4543 = 45e-9f;
 			//cx43
@@ -291,7 +400,7 @@ int main(void)
 			// float gmax4543 = g_both*0.8;
 
 			double par4543[14] = {0.0257, 0.0218, 0.0899, -37.5, -1, gmax4543*0.8876, gmax4543*0.07,
-				   0.0525, 0.039, 0.0993, -5.22, -1,  gmax4543*0.816,  gmax4543*0.0125};	
+			                      0.0525, 0.039, 0.0993, -5.22, -1,  gmax4543*0.816,  gmax4543*0.0125};	
 			double limit = 4.83; // <--- TODO: kolkas limit reikia rankiniu budu ivesti i compShader1
 			// // KM 2021-10-29
 			// float gmax4543 = g_both*0.5;
@@ -360,41 +469,57 @@ int main(void)
 					bool orientation = uint_dist100(rng) >= 50; // orientacija erdveje issibarsciusi vienodomis tikimybemis
 					for (int ii = 0; ii < 7 * 2; ii++)						//copy all parameters of all gates
 					{
-						// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
-						// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f && uint_dist10(rng) > 7) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
-						// if (x > 32 - storis / 2.f && is4345) // su random distribution
-						
-						// if (x >= sizeX-1) { // add non conductive line
+						if (loadFrom == LoadFrom::file)
+							switch(image[y*imageSizeX+x].R) { // set gj accoring input image
+								case 0:	// no-cond
+									break;
+								case 128: // 4345 !!!!!
+									ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];
+									break;
+								case 255: // high cond (43)
+									ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par43[ii];									
+									break;
+								default:
+									// cerr << "switch(image[y*imageSizeX+x].R) ... unknown .R value: " << image[y*imageSizeX+x].R
+									// 	<< "\nexiting...\n";
+									// return 0;
+									// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];
+									break;
+							}
+						else {
+							// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+							// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f && uint_dist10(rng) > 7) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+							// if (x > 32 - storis / 2.f && is4345) // su random distribution
+							
+							// if (x >= sizeX-1) { // add non conductive line
 
-						// }
-						// else
-
-						// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
-						// if (x > 30 ) //heterotypic box, Cx43-45 zona		
-						if (x > 10 && (x % 20 > 0) && (x % 20 <= 2) ) //kas 20 po 2 last, Cx43-45 zona		straipsniui
-						// if (x > 10 && (x % 20 > 0) && (x % 20 <= 10) ) //cv bandymai, Cx43-45 zona		
-						// if (is4345 && i != 1) //reentry tyrimams Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
-						// if (x >= 70 && x <= 72 && y >= 75-50 && y < 75+50)
-							ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];
-						// if (i == 2) //NE,
-						// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];;
-						// }
-						else
-						// if (!isNonCond) // Cx43 zona
-						   {
-							// if (isNonCond && ( x >= 15 && (x % 10 == 3) ) ) { // cx43 zonoje pridedam kliuciu, kad sumazinti sroves nusiurbima
-								// if (ii == 5 || ii == 6 || ii == 12 || ii == 13) //go1,2 gc1,2 = labai mazas
-									// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = 1.e-30f;  
 							// }
 							// else
-								ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par43[ii];
-						   }
+
+							// if (!isNonCond) // Cx43 zona
+							//    {
+
+							// 		ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par43[ii];
+							//    }
+							// if (x > 32 - storis / 2.f && x < 32 + storis / 2.f) //heterotypic box, Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+							// if (x > 30 ) //heterotypic box, Cx43-45 zona		
+							if (x > 10 && (x % 20 > 0) && (x % 20 <= 2) ) //kas 20 po 2 last, Cx43-45 zona		straipsniui
+							// if (x > 10 && (x % 20 > 0) && (x % 20 <= 10) ) //cv bandymai, Cx43-45 zona		
+							// else if (is4345 && ii != 2) //reentry tyrimams Cx43-45 zona		// {// "brick wall", hetero-line: W, NW - cx4345 p(+); NE - cx4345 p(-)
+							// if (x >= 70 && x <= 72 && y >= 75-50 && y < 75+50)
+								ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];
+							// if (i == 2) //NE,
+							// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];;
+							// }
+							else
 
 
-						// // tiesiog visa zona cx4345
-						// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];
-						// // // tiesiog visa zona cx43
-						// // ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par43[ii];
+
+							// tiesiog visa zona cx4345
+							// ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par4543[ii];
+							// // tiesiog visa zona cx43
+							ssb_gj_par_host[y * sizeX * 3 * 7 * 2 + x * 3 * 7 * 2 + i * 7 * 2 + ii] = par43[ii];
+						}
 					}
 
 					// if (isNonCond) {
@@ -484,15 +609,15 @@ int main(void)
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, ssbo_J_gj);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u_reg);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, frame_chunk_size * sizeX*sizeY * sizeof(ssb_u_reg_host[0]), ssb_u_reg_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, frame_chunk_size * sizeX*sizeY * sizeof(ssb_u_reg_host[0]), ssb_u_reg_host, GL_STREAM_COPY);  
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, ssbo_u_reg);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * sizeX * sizeY * sizeof(ssb_gj_host[0]), ssb_gj_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * sizeX * sizeY * sizeof(ssb_gj_host[0]), ssb_gj_host, GL_DYNAMIC_COPY); //
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, ssbo_gj);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_reg);
-	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * frame_chunk_size * sizeX*sizeY * sizeof(ssb_gj_reg_host[0]), ssb_gj_reg_host, GL_DYNAMIC_COPY); //sizeof(data) only works for statically sized C/C++ arrays.
+	glBufferData(GL_SHADER_STORAGE_BUFFER, 3 * frame_chunk_size * sizeX*sizeY * sizeof(ssb_gj_reg_host[0]), ssb_gj_reg_host, GL_STREAM_COPY); // TODO: GL_STREAM_COPY vs GL_DYNAMIC_COPY
 	glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 11, ssbo_gj_reg);
 
 	glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_par);
@@ -685,36 +810,74 @@ int main(void)
 	//glLoadIdentity();
 	//glDrawElements(GL_TRIANGLES, (sizeX - 1) * (sizeY - 1) * 2 * 3, GL_UNSIGNED_INT, 0);
 
-	// Zarr
+	// 
+	// ***** Zarr ****
+	//
 	// std::filesystem::remove_all("data1.zr");
+	#ifdef _WIN32
 	std::filesystem::remove_all("d:\data_tmp1.zr");
 	// z5::filesystem::handle::File f("data1.zr", z5::FileMode::modes::w);
 	z5::filesystem::handle::File f("d:\data_tmp1.zr", z5::FileMode::modes::w);
+	#else
+	// std::filesystem::remove_all("data_latest.zr");
+	std::filesystem::remove_all(outZarrName);
+	// z5::filesystem::handle::File f("data1.zr", z5::FileMode::modes::w);
+	// z5::filesystem::handle::File f("data_latest.zr", z5::FileMode::modes::w);
+	z5::filesystem::handle::File f(outZarrName, z5::FileMode::modes::w);
+	#endif
 
 	// create the file in zarr format
 	const bool createAsZarr = true;
 	z5::createFile(f, createAsZarr);
 
 	// create a new zarr dataset
+	size_t t_max_ceil_to_chunks = ceil(t_max / (double)frame_chunk_size) * frame_chunk_size;
 	const size_t i_frame_max = t_max * 1. / par.dt / itersInFrame; //6000e3; // dt*iter_in_frame= 0.02*10=0.2 ms per frame
 
+	// tmp vars for float32->uint8
+	unsigned char *u_host_uchar8 = new unsigned char[frame_chunk_size * sizeX * sizeY];
+	unsigned char *gj_host_uchar8 = new unsigned char[frame_chunk_size * sizeX * sizeY * 3]; //bandymams trink
+	float *gj_host_float32 = new float[frame_chunk_size * sizeX * sizeY * 3];
+	// unsigned char gj_host_uchar8[frame_chunk_size * sizeX * sizeY * 3] {};
+
+	//
+	// u
+	//
 	const std::string dsName = "u";
 	std::vector<size_t> shape = {i_frame_max, sizeY, sizeX};
 	std::vector<size_t> chunks = {i_frame_max / 100 + 1, sizeY, sizeX};
-	auto u_ds = z5::createDataset(f, dsName, "float32", shape, chunks);
 
+	#ifdef WITH_BLOSC
+	if (debugLevel > 0)
+		printf("\n ***** defined WITH_BOSC***************\n");
+	#endif
+	z5::types::CompressionOptions copts;
+	copts["codec"] = std::string("blosclz");
+	// z5::types::defaultCompressionOptions(z5::types::Compressor::blosc, copts, true);
+	auto u_ds = z5::createDataset(f, dsName, "uint8", shape, chunks, "blosc", copts);
+	// z5::Metadata fMeta(true);
+	// z5::filesystem::writeMetadata(f, fMeta);
+	// auto u_ds = z5::createDataset(f, dsName, "uint8", shape, chunks, "blosc");
+	// auto u_ds = z5::createDataset(f, dsName, "uint8", shape, chunks, "zlib");	
+
+	//
+	// gj
+	//
 	const std::string dsName1 = "gj";
 	std::vector<size_t> shape1 = {i_frame_max, sizeY, sizeX, 3};
 	std::vector<size_t> chunks1 = {i_frame_max / 100 + 1, sizeY, sizeX, 3};
-	auto gj_ds = z5::createDataset(f, dsName1, "float32", shape1, chunks1);
+	z5::types::CompressionOptions copts1;
+	copts1["codec"] = std::string("blosclz");
+	// z5::types::defaultCompressionOptions(z5::types::Compressor::blosc, copts1, true);	
+	// auto gj_ds = z5::createDataset(f, dsName1, "uint8", shape1, chunks1, "blosc", copts1);
+	auto gj_ds = z5::createDataset(f, dsName1, "float32", shape1, chunks1, "blosc", copts1);
+	// auto gj_ds = z5::createDataset(f, dsName1, "uint8", shape1, chunks1, "blosc");
+	// auto gj_ds = z5::createDataset(f, dsName1, "uint8", shape1, chunks1, "zlib");
 
-	// get handle for the dataset
-	const auto dsHandle = z5::filesystem::handle::Dataset(f, dsName);
-	const auto dsHandle1 = z5::filesystem::handle::Dataset(f, dsName1);
-
-	// read and write json attributes
+	// for attribute writing
+	const auto dsHandle = z5::filesystem::handle::Dataset(f, dsName); // y
+	// const auto dsHandle1 = z5::filesystem::handle::Dataset(f, dsName1); // gj
 	nlohmann::json attributesIn;
-	// attributesIn["bar"] = "foo";
 
 	uint32_t i = 0;
 	uint32_t i_frame = 0;
@@ -722,7 +885,8 @@ int main(void)
 	t_start = clock();
 	do // main Loop
 	{
-		if (!pause)
+		glfwPollEvents();
+		if (!paused)
 		{
 			mtx.lock();
 			glfwMakeContextCurrent(window);			
@@ -779,10 +943,11 @@ int main(void)
 			if ((i_frame + 1) % frame_chunk_size == 0)
 			{
 			printf("\riter %d, iter_in_chunk %d, simul %.2f ms", i, i_frame_in_current_chunk, i * .02f);				
+			fflush(stdout);
 			// perkelta update kas chunk
 			glUseProgram(vertFragShadersID); //;glUseProgram(shIDs.frVeID);
 			//glPointSize(5.f);
-			// glPolygonMode(GL_FRONT_AND_BACK, GL_LINE); //wireframe mode
+			// glPolygonMode(GL_FRONT_AND_BACK, 	GL_LINE); //wireframe mode
 			glBindVertexArray(VAO);
 			glUniform1ui(26, 1); //whatToPlot: 1 u, 2 vj, 3 gj
 			glDrawElements(GL_TRIANGLES, (sizeX - 1) * (sizeY - 1) * 2 * 3, GL_UNSIGNED_INT, 0);
@@ -810,30 +975,66 @@ int main(void)
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u_reg);
 				glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, frame_chunk_size * sizeX * sizeY * sizeof(ssb_u_reg_host[0]), ssb_u_reg_host);
+				
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_gj_reg);
 				glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, frame_chunk_size * sizeX * sizeY * 3 * sizeof(ssb_gj_reg_host[0]), ssb_gj_reg_host);
 				glMemoryBarrier(GL_ALL_BARRIER_BITS);
 
-std::async([&] {
+std::async(std::launch::async, [&] {
+				// write attrs
 				attributesIn["frames_count"] = last_iter;
 				attributesIn["dt_reg"] = itersInFrame * par.dt;
 				z5::writeAttributes(dsHandle, attributesIn);
-				z5::writeAttributes(dsHandle1, attributesIn);
+				// z5::writeAttributes(dsHandle1, attributesIn);
 
+				//convert float32->uint8 for better compresson
+				#pragma omp parallel for
+				for (int a = 0; a < frame_chunk_size * sizeX * sizeY; a++)
+					u_host_uchar8[a] = (ssb_u_reg_host[a]+85.)/(85.+20.)*255.; //padarom kad butu per visa uchar ilgi -85 iki 20mV -> 0..255
+				
+				#pragma omp parallel for
+				for (int a = 0; a < frame_chunk_size * sizeX * sizeY * 3; a++) { // tas pats su gj, tik isskiriam ribas <15,15-30,>30 nS
+					if (ssb_gj_reg_host[a] > 30.e-9f)
+						gj_host_uchar8[a] = 255;
+					else if (ssb_gj_reg_host[a] < 10.e-9f)
+						gj_host_uchar8[a] = 0;
+					else
+						gj_host_uchar8[a] = (ssb_gj_reg_host[a] - 10.e-9f) / (30.e-9f - 10.e-9f) * 255.f;
+					gj_host_float32[a] = ssb_gj_reg_host[a];
+				}
+				
+				// write arrays
+				// u
 				z5::types::ShapeType offset = {last_iter, 0, 0};
 				auto size = frame_chunk_size * sizeY * sizeX;
 				std::vector<std::size_t> shape = {frame_chunk_size, sizeY, sizeX};
-				auto array = xt::adapt(ssb_u_reg_host, size, xt::no_ownership(), shape);
-				z5::multiarray::writeSubarray<float>(u_ds, array, offset.begin());
+				auto array = xt::adapt(u_host_uchar8, size, xt::no_ownership(), shape);
+				// auto array = xt::adapt(ssb_u_reg_host, size, xt::no_ownership(), shape);
+				z5::multiarray::writeSubarray<unsigned char>(u_ds, array, offset.begin());
+				// z5::multiarray::writeSubarray<float>(u_ds, array, offset.begin());
 
+				// gj - float32
 				z5::types::ShapeType offset1 = {last_iter, 0, 0, 0};
 				auto size1 = frame_chunk_size * sizeY * sizeX * 3;
 				std::vector<std::size_t> shape1 = {frame_chunk_size, sizeY, sizeX, 3};
-				auto array1 = xt::adapt(ssb_gj_reg_host, size1, xt::no_ownership(), shape1);
+				auto array1 = xt::adapt(gj_host_float32, size1, xt::no_ownership(), shape1); 
+				// auto array1 = xt::adapt(ssb_gj_reg_host, size1, xt::no_ownership(), shape1);
 				z5::multiarray::writeSubarray<float>(gj_ds, array1, offset1.begin());
+				// z5::multiarray::writeSubarray<float>(gj_ds, array1, offset1.begin());
+				
+				// gj - uint8
+				// z5::types::ShapeType offset1 = {last_iter, 0, 0, 0};
+				// auto size1 = frame_chunk_size * sizeY * sizeX * 3;
+				// std::vector<std::size_t> shape1 = {frame_chunk_size, sizeY, sizeX, 3};
+				// auto array1 = xt::adapt(gj_host_uchar8, size1, xt::no_ownership(), shape1); 
+				// // auto array1 = xt::adapt(ssb_gj_reg_host, size1, xt::no_ownership(), shape1);
+				// z5::multiarray::writeSubarray<unsigned char>(gj_ds, array1, offset1.begin());
+				// // z5::multiarray::writeSubarray<float>(gj_ds, array1, offset1.begin());
 
-				printf("\ncurrent_frame_chunk: %d \n", current_frame_chunk);
-				printf("\n***iter_in_chunk %d, simul %.2f ms\n", i_frame_in_current_chunk, i * .02f);
+				if (debugLevel > 0) {
+					printf("\ncurrent_frame_chunk: %d \n", current_frame_chunk);
+					printf("\n***iter_in_chunk %d, simul %.2f ms\n", i_frame_in_current_chunk, i * .02f);
+				}
 });				
 
 				current_frame_chunk++;
@@ -841,7 +1042,6 @@ std::async([&] {
 
 			// // Swap buffers
 			glfwSwapBuffers(window);
-			glfwPollEvents();
 			if (false)
 				if (lbutton_down)
 				{
@@ -1154,13 +1354,14 @@ std::async([&] {
 		while (!queueCmd.empty()) // grpc komandu apdorojimas
 		{
 			int cmd = queueCmd.front();
-			printf("\nQueue=%d\n", cmd);
+			printf("\nQueue front (cmd nr.)=%d", cmd);
 			queueCmd.pop();
 			switch (cmd)
 			{
 			case 1: //pause
 				/* code */
-				pause = !pause;
+				paused = !paused;
+				printf(", paused=%s\n", paused ? "true" : "false");				
 				break;
 			case 2: //getVm
 				glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo_u);
@@ -1176,7 +1377,9 @@ std::async([&] {
 	} // Check if the ESC key was pressed or the window was closed
 	while (glfwGetKey(window, GLFW_KEY_ESCAPE) != GLFW_PRESS &&
 		   glfwWindowShouldClose(window) == 0);
-	printf("... nDone.\n");
+	printf("\nFile outZarrName=%s wrote.\n", outZarrName);
+	if (debugLevel > 0)
+		printf("... Done.\n");
 	t_end = clock();
 
 	glfwMakeContextCurrent(window);
@@ -1340,7 +1543,7 @@ std::async([&] {
 	glfwTerminate();
 
 	double execTime = (double)(t_end - t_start) / CLOCKS_PER_SEC;
-	printf("\nTime required for execution: %f sec., FPS averange: %f\n", execTime,
+	printf("Time required for execution: %f sec., FPS averange: %f\n", execTime,
 		   (float)i / itersInFrame / execTime);
 	//system("PAUSE");
 
@@ -1371,9 +1574,12 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action, int mod
 	{
 		switch (key)
 		{
+		case GLFW_KEY_P:
+			queueCmd.push(1); // 1 - toggle pause
+			break;
 		case GLFW_KEY_G:
 			enableGjModel = !enableGjModel;
-			printf(", enableGjModel=%d\n", enableGjModel);
+			printf("********************************************** enableGjModel=%d\n", enableGjModel);
 			break;
 		case GLFW_KEY_KP_7: // laidumas
 			increaseGj = true;
@@ -1422,7 +1628,7 @@ void APIENTRY glDebugOutput(GLenum source,
 							const void *userParam)
 {
 	// ignore non-significant error/warning codes
-	if (id == 131169 || id == 131185 || id == 131218 || id == 131204)
+	if (id == 131169 || id == 131185 || id == 131218 || id == 131204 || id==131186) // TODO: id 131186 - debug message: being copied/moved from VIDEO memory to HOST memory.
 		return;
 
 	std::cout << "---------------" << std::endl;
@@ -1500,7 +1706,7 @@ void APIENTRY glDebugOutput(GLenum source,
 	}
 	std::cout << std::endl;
 	std::cout << std::endl;
-	exit(1);
+	// exit(1);
 }
 
 //*******************
@@ -1580,7 +1786,8 @@ void RunServer(std::unique_ptr<Server> *serverPtr) // serverPtr - to control ser
 	// std::unique_ptr<Server> *server = new std::unique_ptr<Server>(builder.BuildAndStart());
 	// serverPtr = server; //new Server(builder.BuildAndStart());
 	serverPtr = &server;
-	std::cout << "Server listening on " << server_address << std::endl;
+	if (debugLevel > 0)
+		std::cout << "Server listening on " << server_address << std::endl;
 
 	// Wait for the server to shutdown. Note that some other thread must be
 	// responsible for shutting down the server for this call to ever return.

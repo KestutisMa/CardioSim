@@ -87,18 +87,34 @@ void main() {
     const float minute_ms = 60000.f; // kiek ms vienoje minuteje
     
     float pulse_period = minute_ms / pulse1; // ms
-    float t = i*dt_sim;
+    float t = float(i)*dt_sim;
     if ( t > t_switch_to_pulse2) // pulso daznio keitimas po tam tikro laiko, ms
       pulse_period = minute_ms/pulse2; // ms
     if ( t > t_switch_to_pulse3) // pulso daznio keitimas po tam tikro laiko, ms
       pulse_period = minute_ms/pulse3; // ms
     if ( t > t_switch_to_pulse4) // pulso daznio keitimas po tam tikro laiko, ms
       pulse_period = minute_ms/pulse4; // ms
+    if ( t > t_switch_to_pulse5) // pulso daznio keitimas po tam tikro laiko, ms
+      pulse_period = minute_ms/pulse5; // ms
+    if ( t > t_switch_to_pulse6) // pulso daznio keitimas po tam tikro laiko, ms
+      pulse_period = minute_ms/pulse6; // ms
+    if ( t > t_switch_to_pulse7) // pulso daznio keitimas po tam tikro laiko, ms
+      pulse_period = minute_ms/pulse7; // ms
+    if ( t > t_switch_to_pulse8) // pulso daznio keitimas po tam tikro laiko, ms
+      pulse_period = minute_ms/pulse8; // ms
+    if ( t > t_switch_to_pulse9) // pulso daznio keitimas po tam tikro laiko, ms
+      pulse_period = minute_ms/pulse9; // ms
+    if ( t > t_switch_to_pulse10) // pulso daznio keitimas po tam tikro laiko, ms
+      pulse_period = minute_ms/pulse10; // ms
+
 
     // int second = 250; // ms
     //			while (true) {
     //			}
     // float pulse_period_i = pulse_period * 1./dt_sim; // pulso periodas iteracijom
+    
+    pulse_period = minute_ms/pulse5; // ms
+
     I_ext = //( (i*dt_sim > first && i*dt_sim < first+2)
             //||  (i*dt_sim > first+delay && i*dt_sim < first+delay + 1) ) &&
         // ((i >= first * 1./dt && i <= (first + pulse_width) * 1./dt) || // kai naudojamas pulse1
@@ -112,11 +128,62 @@ void main() {
                 // x <= 64+4) //? .25f : 0;
                 // && (pow(int(y) - 10-1, 2) + pow(int(x) - 4 + 5, 2) <= 5) // zad. apvali zona kaireje apacioje
                 // && (pow(int(y) - 32, 2) + pow(int(x) - (32-10), 2) <= 3*3) // zad. apvali zona
-                && (x == 0) // zad. plokscia banga
+                // && (x == 5) && ( abs(y) >= 200) // zad. plokscia banga
+                && (x >= 0) && (x < 5) // zad. plokscia banga
             ? .2f
             : 0;
 
-    // I_ext = 1.f;
+  // I_ext = 0;
+  // if (t >= 10 && t <= 12)  
+  //   if (x >= 10 && x < 12) // zad. plokscia banga  
+  //     I_ext = .2f;            
+  // if (t >= 550 && t <= 555)  // test
+  // if (t >= 540 && t <= 545)  // drift
+  // if (t >= 615   && t <= 620)  // drift
+  // if (t >= 620   && t <= 625)  // drift
+  // if (t >= 550 && t <= 555)  // veikia, vienas reentry
+  // if (t >= 500 && t <= 505)  // 300 laidumas, visos laidzios
+  // if (t >= 660 && t <= 665)  // 100 laidumas su orig
+  // if (t >= 475 && t <= 470)  // veikia kai visos laidzios
+  // if (t >= 455 && t <= 460)  // veikia kai 25proc neleidziu
+    // if (x >= 240 && x < 255 && y > 100) // zad. plokscia banga - parallel-field
+    // if (x >= 240 && x < 255 && y < 160) // zad. plokscia banga - parallel-field - drift
+    // // if (x > 0 && x < 2) // zad. plokscia banga - nuo x=0
+    // // if (y >= 0 && y < 150 && x <= 500) // zad. plokscia banga - cross-field (Nayak 2013 https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0072950)        
+    //   I_ext = .2f;          
+
+    // fibril. bandymai: su init excit.
+    // I_ext = 0.f;
+    // if ( (t >= 0 && t <= 5) || (t >= 100 && t < 105) )
+    //   if (x >= 320 && x < 330 && y > 140)
+    //     I_ext = .2f;          
+    
+    // // fibril. bandymai: s1s2 init
+    // I_ext = 0.f;
+    // if ( t >= 0 && t <= 2 )
+    //   if (x > 0 && x < 5)
+    //     I_ext = .2f;          
+    // if ( t >= 625 && t <= 627 )
+    //   if (x > 320 && x < 330 && y > 140 )
+    //     I_ext = .2f;          
+    
+    // // s1s2, gaunas reentry VCT sugeneruotam klasteryje (477)
+    // I_ext = 0.f;
+    // if ( t >= 0 && t <= 2 )
+    //   if (x > 0 && x < 5)
+    //     I_ext = .2f;          
+    // if ( t >= 705 && t <= 707 ) //if ( t >= 625 && t <= 627 )
+    //   if (x > 380 && x < 400 && y > 80 ) // y 130
+    //     I_ext = .2f;          
+    
+    // // // // s1s2, 10 imgs
+    // I_ext = 0.f;
+    // if ( t >= 50 && t <= 55 )
+    //   if (x > 0 && x < 5)
+    //     I_ext = .2f;          
+    // if ( t >= 620 && t <= 625 )  //if ( t >= 580 && t <= 585 ) 
+    //   if (x > 250 && x < 270 && y > 80 ) // y 130
+    //     I_ext = .2f;          
 
     // I_ext = mouse_pressed && (pow(int(x) - int(mouse_coords.x), 2) +
     //                           pow(int(y) - int(mouse_coords.y), 2))
